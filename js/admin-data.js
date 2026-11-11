@@ -53,7 +53,7 @@ export const SECTIONS = {
       { key: "staff_no", label: "Staff / EPF number" },
       { key: "can_supervise", label: "Can supervise", type: "checkbox", list: true, auto: (r) => SUPERVISE_GRADES.includes(r.grade) },
       { key: "can_invigilate", label: "Can invigilate", type: "checkbox", list: true, auto: (r) => INVIGILATE_GRADES.includes(r.grade) },
-      { key: "is_admin", label: "Admin access", type: "checkbox" },
+      { key: "is_admin", label: "Admin access", type: "checkbox", filter: false },
     ],
     example: { title: "Dr.", full_name: "AB Perera", grade: "SL1", faculty: "FMSH", department: "", email: "", staff_no: "1234", can_supervise: "", can_invigilate: "", is_admin: "false" },
   },
@@ -63,12 +63,12 @@ export const SECTIONS = {
     help: "Exam halls and classrooms. The exam capacity is lower than the lecture capacity because of spacing between seats.",
     fields: [
       { key: "name", label: "Hall name", required: true, list: true },
-      { key: "building", label: "Building / location", list: true },
+      { key: "building", label: "Building / location", list: true, filter: true },
       { key: "lecture_capacity", label: "Lecture capacity", type: "number", list: true },
       { key: "exam_capacity", label: "Exam capacity", type: "number", required: true, list: true },
       { key: "seat_rows", label: "Seat rows (exam layout)", type: "number" },
       { key: "seats_per_row", label: "Seats per row (exam layout)", type: "number" },
-      { key: "door_position", label: "Door position", type: "select",
+      { key: "door_position", label: "Door position", type: "select", filter: false,
         options: [["front-left", "Front left"], ["front-right", "Front right"], ["back-left", "Back left"], ["back-right", "Back right"]] },
     ],
     example: { name: "6-1", building: "FMSH", lecture_capacity: "", exam_capacity: "58", seat_rows: "", seats_per_row: "", door_position: "front-left" },
@@ -82,14 +82,14 @@ export const SECTIONS = {
       { key: "name", label: "Module name", required: true, list: true },
       { key: "batches", label: "Streams sitting this paper", type: "multi", ref: "batches",
         link: "module_batches", linkKey: "module_id", linkRef: "batch_id", required: true, list: true },
-      { key: "semester", label: "Semester", type: "number", required: true, list: true },
-      { key: "duration_hours", label: "Paper length (hours)", type: "number", step: "0.5", list: true },
+      { key: "semester", label: "Semester", type: "number", required: true, list: true, filter: true },
+      { key: "duration_hours", label: "Paper length (hours)", type: "number", step: "0.5", list: true, filter: true },
       { key: "repeat_students", label: "Repeat students (R)", type: "number", list: true },
       { key: "expected_students", label: "Proper students override (empty = whole stream)", type: "number" },
       { key: "audience", label: "Who sits it", type: "select",
         options: [["all", "Everyone in the stream"], ["cadets", "Officer cadets only"], ["day_scholars", "Day scholars only"]] },
-      { key: "slot_group", label: "Slot group (electives)" },
-      { key: "examiner_id", label: "Examiner", type: "fk", ref: "lecturers", csv: "examiner" },
+      { key: "slot_group", label: "Slot group (electives)", filter: true },
+      { key: "examiner_id", label: "Examiner", type: "fk", ref: "lecturers", csv: "examiner", filter: false },
     ],
     example: { code: "MGT 120202", name: "Business Law", batches: "43|MTS; 43|MTH; 43|LM; 43|LMH", semester: "2", duration_hours: "2", repeat_students: "15", expected_students: "", audience: "all", slot_group: "", examiner: "" },
   },
@@ -98,11 +98,11 @@ export const SECTIONS = {
     title: "Batches", singular: "batch", table: "batches", pk: "id", order: "intake", conflict: "department_id,intake,degree", hold: true,
     help: "One batch = one stream of one intake, e.g. Intake 43 · MTS. Student count is the number of proper students (P).",
     fields: [
-      { key: "intake", label: "Intake", type: "number", required: true, list: true },
-      { key: "stream", label: "Stream code (MTS, LM, BBA…)", required: true, list: true },
+      { key: "intake", label: "Intake", type: "number", required: true, list: true, filter: true },
+      { key: "stream", label: "Stream code (MTS, LM, BBA…)", required: true, list: true, filter: true },
       { key: "degree", label: "Degree programme", required: true, list: true },
       { key: "department_id", label: "Department", type: "fk", ref: "departments", required: true, list: true, csv: "department" },
-      { key: "semester", label: "Current semester", type: "number", required: true, list: true },
+      { key: "semester", label: "Current semester", type: "number", required: true, list: true, filter: true },
       { key: "student_count", label: "Proper students (P)", type: "number", list: true },
     ],
     example: { intake: "43", stream: "MTS", degree: "BSc in MTS", department: "Department of Management", semester: "2", student_count: "42" },
@@ -143,3 +143,9 @@ export const SECTIONS = {
 
 // Order of items in the sidebar
 export const NAV = ["lecturers", "rooms", "modules", "batches", "students", "holidays", "departments"];
+
+// Sidebar icons (Tabler icon names)
+export const ICONS = {
+  overview: "ti-layout-dashboard", lecturers: "ti-users", rooms: "ti-door", modules: "ti-book",
+  batches: "ti-school", students: "ti-id-badge-2", holidays: "ti-calendar", departments: "ti-building",
+};

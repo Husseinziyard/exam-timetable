@@ -94,7 +94,8 @@ async function saveLinks(f, ownerIds, idsByOwner) {
 // =====================================================================
 export async function renderSection(root, key) {
   const cfg = SECTIONS[key];
-  const state = { rows: [], refs: {}, q: "", showHeld: true };
+  // colFilters: { fieldKey: { op: "contains" | "equals" | "starts" | "not", value: "text" } }
+  const state = { rows: [], refs: {}, q: "", showHeld: true, colFilters: {}, sort: null };
 
   root.innerHTML = `
     <div class="section-head">
@@ -104,18 +105,49 @@ export async function renderSection(root, key) {
       </div>
     </div>
     <div class="toolbar">
-      <input type="search" class="search" placeholder="Search ${esc(cfg.title.toLowerCase())}…" aria-label="Search">
+      <input type="search" class="search" placeholder="Search all columns…" aria-label="Search">
       ${cfg.hold ? `<label class="check"><input type="checkbox" class="show-held" checked> Show items on hold</label>` : ""}
       <span class="spacer"></span>
       <button class="btn light" data-act="template">Download CSV template</button>
       <label class="btn light">Import CSV<input type="file" accept=".csv" class="csv-file" hidden></label>
       <button class="btn" data-act="add">+ Add</button>
     </div>
+    <div class="chips"></div>
     <div class="table-wrap"><p class="loading">Loading…</p></div>
     <p class="count muted"></p>`;
 
   const wrap = root.querySelector(".table-wrap");
+  const chips = root.querySelector(".chips");
   const listFields = cfg.fields.filter((f) => f.list);
+  const plain = (html) => String(html).replace(/<[^>]*>/g, "").replace(/&amp;/g, "&").trim();
+  const cellText = (f, r) => {
+    const t = plain(displayValue(f, r, state.refs));
+    return t === "—" ? "" : t;
+  };
+  const OPS = { contains: "contains", equals: "equals", starts: "starts with", not: "doesn't contain" };
+  const shortLabel = (f) => f.label.replace(/ \(.*\)/, "");
+
+  function passesFilters(r) {
+    return Object.entries(state.colFilters).every(([k, { op, value }]) => {
+      const f = cfg.fields.find((x) => x.key === k);
+      const t = cellText(f, r).toLowerCase(), v = value.toLowerCase();
+      if (op === "equals") return f.type === "multi" ? t.split(", ").includes(v) : t === v;
+      if (op === "starts") return t.startsWith(v);
+      if (op === "not") return !t.includes(v);
+      return t.includes(v);
+    });
+  }
+
+  function sortRows(rows) {
+    if (!state.sort) return rows;
+    const f = cfg.fields.find((x) => x.key === state.sort.key);
+    const val = (r) => (f.type === "number" ? (r[f.key] ?? -Infinity) : cellText(f, r).toLowerCase());
+    return [...rows].sort((a, b) => {
+      const x = val(a), y = val(b);
+      const c = typeof x === "number" ? x - y : String(x).localeCompare(String(y), undefined, { numeric: true });
+      return state.sort.dir * c;
+    });
+  }
 
   async function load() {
     // load dropdown data needed by this section
@@ -131,11 +163,21 @@ export async function renderSection(root, key) {
     draw();
   }
 
+  function drawChips() {
+    const active = Object.entries(state.colFilters);
+    chips.innerHTML = active.map(([k, { op, value }]) => {
+      const f = cfg.fields.find((x) => x.key === k);
+      return `<span class="chip">${esc(shortLabel(f))} ${OPS[op]} “${esc(value)}”
+        <button class="chip-x" data-remove="${k}" aria-label="Remove filter">×</button></span>`;
+    }).join("") + (active.length > 1 ? `<button class="link" data-remove="*">Clear all</button>` : "");
+  }
+
   function draw() {
+    drawChips();
     const q = state.q.toLowerCase();
-    const rows = state.rows.filter((r) =>
-      (state.showHeld || !r.on_hold) &&
-      (!q || listFields.some((f) => String(displayValue(f, r, state.refs)).toLowerCase().includes(q))));
+    const rows = sortRows(state.rows.filter((r) =>
+      (state.showHeld || !r.on_hold) && passesFilters(r) &&
+      (!q || listFields.some((f) => cellText(f, r).toLowerCase().includes(q)))));
 
     if (!state.rows.length) {
       wrap.innerHTML = `<div class="empty"><p><strong>Nothing here yet.</strong></p><p class="muted">Click “+ Add”, or download the CSV template, fill it in Excel and import it.</p></div>`;
@@ -144,7 +186,12 @@ export async function renderSection(root, key) {
     }
     wrap.innerHTML = `
       <table class="data">
-        <thead><tr>${listFields.map((f) => `<th>${esc(f.label.replace(/ \(.*\)/, ""))}</th>`).join("")}${cfg.hold ? "<th>Status</th>" : ""}<th class="actions-col"></th></tr></thead>
+        <thead><tr>${listFields.map((f) => {
+          const sorted = state.sort?.key === f.key, filtered = !!state.colFilters[f.key];
+          return `<th class="${filtered ? "filtered" : ""}" aria-sort="${sorted ? (state.sort.dir > 0 ? "ascending" : "descending") : "none"}">
+            <div class="th-inner"><span>${esc(shortLabel(f))}${sorted ? (state.sort.dir > 0 ? " ▲" : " ▼") : ""}${filtered ? ' <span class="dot" title="Filtered"></span>' : ""}</span>
+            <button class="colmenu" data-col="${f.key}" aria-label="Sort or filter ${esc(shortLabel(f))}" aria-haspopup="true"><i class="ti ti-dots-vertical" aria-hidden="true"></i></button></div></th>`;
+        }).join("")}${cfg.hold ? "<th>Status</th>" : ""}<th class="actions-col"></th></tr></thead>
         <tbody>${rows.map((r) => `
           <tr class="${r.on_hold ? "held" : ""}" data-pk="${esc(r[cfg.pk])}" tabindex="0" title="Click to see and edit all details">
             ${listFields.map((f) => `<td>${displayValue(f, r, state.refs)}</td>`).join("")}
@@ -153,21 +200,103 @@ export async function renderSection(root, key) {
               ${cfg.hold ? `<button class="link" data-act="hold">${r.on_hold ? "Release" : "Hold"}</button>` : ""}
               <button class="link danger" data-act="delete">Delete</button>
             </td>
-          </tr>`).join("")}
+          </tr>`).join("") || `<tr><td colspan="${listFields.length + 2}" class="muted" style="text-align:center;padding:32px">Nothing matches these filters.</td></tr>`}
         </tbody>
       </table>`;
     root.querySelector(".count").textContent =
       `Showing ${rows.length} of ${state.rows.length}` + (cfg.hold ? ` · ${state.rows.filter((r) => r.on_hold).length} on hold` : "");
   }
 
+  // ----- the ⋮ column menu: sort + filter -----
+  function closeMenu() { document.querySelector(".col-pop")?.remove(); }
+
+  function openMenu(btn) {
+    closeMenu();
+    const f = cfg.fields.find((x) => x.key === btn.dataset.col);
+    const cur = state.colFilters[f.key] || { op: f.type === "select" || f.type === "fk" || f.type === "checkbox" ? "equals" : "contains", value: "" };
+    // suggestions = the values that exist in this column
+    const values = [...new Set(state.rows.flatMap((r) =>
+      f.type === "multi" ? cellText(f, r).split(", ") : [cellText(f, r)]).filter(Boolean))]
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).slice(0, 200);
+
+    const pop = document.createElement("div");
+    pop.className = "col-pop";
+    pop.setAttribute("role", "dialog");
+    pop.innerHTML = `
+      <p class="pop-title">${esc(shortLabel(f))}</p>
+      <button class="pop-item" data-sort="1">↑ Sort A → Z</button>
+      <button class="pop-item" data-sort="-1">↓ Sort Z → A</button>
+      ${state.sort?.key === f.key ? `<button class="pop-item" data-sort="0">Remove sort</button>` : ""}
+      <hr>
+      <p class="pop-title">Filter</p>
+      <select class="pop-op" aria-label="Condition">
+        ${Object.entries(OPS).map(([k, l]) => `<option value="${k}" ${k === cur.op ? "selected" : ""}>${l}</option>`).join("")}
+      </select>
+      <input class="pop-val" list="vals-${f.key}" placeholder="Type or pick a value" value="${esc(cur.value)}" aria-label="Value">
+      <datalist id="vals-${f.key}">${values.map((v) => `<option value="${esc(v)}">`).join("")}</datalist>
+      ${values.length && values.length <= 12 ? `<div class="pop-values">${values.map((v) =>
+        `<button class="pop-chip" data-pick="${esc(v)}">${esc(v)}</button>`).join("")}</div>` : ""}
+      <div class="pop-actions">
+        ${state.colFilters[f.key] ? `<button class="btn light small" data-clear>Clear</button>` : ""}
+        <button class="btn small" data-apply>Apply</button>
+      </div>`;
+    document.body.appendChild(pop);
+
+    // place it under the ⋮ button, kept inside the window
+    const b = btn.getBoundingClientRect();
+    const left = Math.min(b.left + window.scrollX, window.scrollX + document.documentElement.clientWidth - pop.offsetWidth - 12);
+    pop.style.left = `${Math.max(12, left)}px`;
+    pop.style.top = `${b.bottom + window.scrollY + 6}px`;
+    const input = pop.querySelector(".pop-val");
+    input.focus();
+
+    const apply = () => {
+      const value = input.value.trim();
+      if (value) state.colFilters[f.key] = { op: pop.querySelector(".pop-op").value, value };
+      else delete state.colFilters[f.key];
+      closeMenu(); draw();
+    };
+    pop.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const t = e.target.closest("button");
+      if (!t) return;
+      if (t.dataset.sort !== undefined) {
+        const d = Number(t.dataset.sort);
+        state.sort = d ? { key: f.key, dir: d } : null;
+        closeMenu(); draw();
+      } else if (t.dataset.pick !== undefined) {
+        input.value = t.dataset.pick;
+        pop.querySelector(".pop-op").value = "equals";
+        apply();
+      } else if (t.hasAttribute("data-clear")) {
+        delete state.colFilters[f.key]; closeMenu(); draw();
+      } else if (t.hasAttribute("data-apply")) apply();
+    });
+    pop.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); apply(); }
+      if (e.key === "Escape") { closeMenu(); btn.focus(); }
+    });
+  }
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest(".col-pop") && !e.target.closest(".colmenu")) closeMenu();
+  });
+
   // ----- events -----
   root.querySelector(".search").addEventListener("input", (e) => { state.q = e.target.value; draw(); });
   root.querySelector(".show-held")?.addEventListener("change", (e) => { state.showHeld = e.target.checked; draw(); });
+  chips.addEventListener("click", (e) => {
+    const k = e.target.dataset.remove;
+    if (!k) return;
+    if (k === "*") state.colFilters = {}; else delete state.colFilters[k];
+    draw();
+  });
   root.querySelector('[data-act="add"]').addEventListener("click", () => openForm(null));
   root.querySelector('[data-act="template"]').addEventListener("click", downloadTemplate);
   root.querySelector(".csv-file").addEventListener("change", (e) => { if (e.target.files[0]) importCsv(e.target.files[0]); e.target.value = ""; });
 
   wrap.addEventListener("click", async (e) => {
+    const menuBtn = e.target.closest(".colmenu");
+    if (menuBtn) { e.stopPropagation(); return openMenu(menuBtn); }
     const tr = e.target.closest("tr[data-pk]");
     if (!tr) return;
     const row = state.rows.find((r) => String(r[cfg.pk]) === tr.dataset.pk);
@@ -400,7 +529,7 @@ export async function renderOverview(root, onNavigate) {
     <div class="stats"><p class="loading">Counting…</p></div>`;
 
   const items = [
-    ["lecturers", "Lecturers"], ["rooms", "Classes"], ["modules", "Modules"],
+    ["lecturers", "Staff"], ["rooms", "Classes"], ["modules", "Modules"],
     ["batches", "Batches"], ["students", "Students"], ["holidays", "Holidays"], ["departments", "Departments"],
   ];
   const counts = await Promise.all(items.map(async ([k]) => {

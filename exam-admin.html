@@ -6,46 +6,76 @@
   <title>Exam timetable — Admin</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
   <link rel="stylesheet" href="css/style.css">
   <link rel="stylesheet" href="css/admin.css">
 </head>
 <body class="admin">
   <header class="topbar">
-    <a class="brand" href="admin.html">
-      <div class="brand-mark">ET</div>
-      <div class="brand-text"><strong>Exam Timetable</strong><span>Admin · Exam timetable</span></div>
-    </a>
+    <div class="topbar-left">
+      <button class="icon-btn mobile-only" id="menu" aria-label="Open menu"><i class="ti ti-menu-2"></i></button>
+      <a class="brand" href="admin.html">
+        <div class="brand-mark">ET</div>
+        <div class="brand-text"><strong>Exam Timetable</strong><span>Admin · Exam timetable</span></div>
+      </a>
+    </div>
     <div class="topbar-right"><span id="who"></span><button class="btn ghost" id="logout">Log out</button></div>
   </header>
 
   <div class="app" id="page" hidden>
-    <nav class="sidebar" id="nav" aria-label="Sections">
-      <a href="#overview" data-key="overview">Overview</a>
-      <div class="nav-label">Data</div>
-      <!-- section links are added by the script below -->
-    </nav>
+    <aside class="sidebar" id="sidebar" aria-label="Sections">
+      <nav id="nav">
+        <a href="#overview" data-key="overview" title="Overview"><i class="ti ti-layout-dashboard" aria-hidden="true"></i><span>Overview</span></a>
+        <div class="nav-label">Data</div>
+        <!-- section links are added by the script below -->
+      </nav>
+      <div class="side-foot">
+        <a href="admin.html" title="Admin home"><i class="ti ti-arrow-left" aria-hidden="true"></i><span>Admin home</span></a>
+        <button class="side-toggle" id="collapse" title="Collapse sidebar" aria-label="Collapse sidebar">
+          <i class="ti ti-layout-sidebar-left-collapse" aria-hidden="true"></i><span>Collapse</span>
+        </button>
+      </div>
+    </aside>
+    <div class="backdrop" id="backdrop"></div>
     <section class="content" id="content" tabindex="-1"></section>
   </div>
   <p class="loading" id="loading">Checking your login…</p>
 
   <script type="module">
     import { requireRole, setupHeader } from "./js/auth.js";
-    import { SECTIONS, NAV } from "./js/admin-data.js";
+    import { SECTIONS, NAV, ICONS } from "./js/admin-data.js";
     import { renderSection, renderOverview } from "./js/crud.js";
 
     const me = await requireRole("admin");
     if (me) {
       setupHeader(me.user);
       document.getElementById("loading").remove();
-      document.getElementById("page").hidden = false;
+      const app = document.getElementById("page");
+      app.hidden = false;
 
       const nav = document.getElementById("nav");
       const content = document.getElementById("content");
-      NAV.forEach((k) => nav.insertAdjacentHTML("beforeend", `<a href="#${k}" data-key="${k}">${SECTIONS[k].title}</a>`));
+      NAV.forEach((k) => nav.insertAdjacentHTML("beforeend",
+        `<a href="#${k}" data-key="${k}" title="${SECTIONS[k].title}"><i class="ti ${ICONS[k]}" aria-hidden="true"></i><span>${SECTIONS[k].title}</span></a>`));
 
-      // Simple page switching using the part of the URL after "#"
+      // ----- sidebar: collapse on desktop (remembered), slide-in on phones -----
+      const collapseBtn = document.getElementById("collapse");
+      const setCollapsed = (on) => {
+        app.classList.toggle("collapsed", on);
+        collapseBtn.querySelector("i").className = `ti ${on ? "ti-layout-sidebar-left-expand" : "ti-layout-sidebar-left-collapse"}`;
+        collapseBtn.querySelector("span").textContent = on ? "Expand" : "Collapse";
+        collapseBtn.title = on ? "Expand sidebar" : "Collapse sidebar";
+        try { localStorage.setItem("sidebarCollapsed", on ? "1" : "0"); } catch {}
+      };
+      try { setCollapsed(localStorage.getItem("sidebarCollapsed") === "1"); } catch {}
+      collapseBtn.addEventListener("click", () => setCollapsed(!app.classList.contains("collapsed")));
+      document.getElementById("menu").addEventListener("click", () => app.classList.add("open"));
+      document.getElementById("backdrop").addEventListener("click", () => app.classList.remove("open"));
+
+      // ----- page switching using the part of the URL after "#" -----
       async function route() {
         const key = location.hash.slice(1) || "overview";
+        app.classList.remove("open");
         nav.querySelectorAll("a").forEach((a) => a.classList.toggle("active", a.dataset.key === key));
         if (SECTIONS[key]) await renderSection(content, key);
         else await renderOverview(content, (k) => (location.hash = k));
