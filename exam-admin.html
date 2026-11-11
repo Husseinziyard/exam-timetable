@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Exam timetable — Admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="admin">
+  <header class="topbar">
+    <a class="brand" href="exam-admin.html">
+      <div class="brand-mark">ET</div>
+      <div class="brand-text"><strong>Exam Timetable</strong><span>Admin · Exam timetable</span></div>
+    </a>
+    <div class="topbar-right"><span id="who"></span><button class="btn ghost" id="logout">Log out</button></div>
+  </header>
+
+  <main id="page" hidden>
+    <h1 class="page-title">Exam timetable</h1>
+    <p class="page-sub">The sidebar (Lecturers, Classes, Modules, Calendar, Department) and the Generate button are coming in the next step.</p>
+    <a class="btn" href="admin.html">← Back</a>
+  </main>
+  <p class="loading" id="loading">Checking your login…</p>
+
+  <script type="module">
+    import { requireRole, setupHeader } from "./js/auth.js";
+    const me = await requireRole("admin");
+    if (me) {
+      setupHeader(me.user);
+      document.getElementById("loading").remove();
+      document.getElementById("page").hidden = false;
+    }
+  </script>
+</body>
+</html>

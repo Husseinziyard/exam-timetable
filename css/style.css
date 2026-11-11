@@ -1,0 +1,145 @@
+/* ===== Exam Timetable — shared styles ===== */
+:root {
+  --navy: #13203a;
+  --navy-2: #1d2f52;
+  --bg: #f5f3ee;
+  --card: #ffffff;
+  --line: #e2ded5;
+  --ink: #1c2230;
+  --muted: #5b6472;
+  --orange: #d9661f;
+  --blue: #2b5d9b;
+  --green: #3d7a4f;
+  --red: #b3261e;
+  --radius: 14px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: "Inter", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+h1, h2, h3 { font-family: "Space Grotesk", "Inter", sans-serif; line-height: 1.15; }
+a { color: inherit; }
+
+/* ----- Top bar ----- */
+.topbar {
+  background: var(--navy);
+  color: #f5f3ee;
+  padding: 16px 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.brand { display: flex; align-items: center; gap: 12px; text-decoration: none; }
+.brand-mark {
+  width: 36px; height: 36px; border-radius: 10px;
+  background: var(--orange); display: grid; place-items: center;
+  font-weight: 700; color: #fff;
+}
+.brand-text strong { display: block; font-size: 16px; }
+.brand-text span { font-size: 13px; color: #c9d1de; }
+.topbar-right { display: flex; align-items: center; gap: 16px; font-size: 14px; color: #c9d1de; }
+
+/* ----- Layout ----- */
+main { flex: 1; width: 100%; max-width: 1100px; margin: 0 auto; padding: 48px 24px; }
+.page-title { font-size: 36px; margin-bottom: 8px; }
+.page-sub { color: var(--muted); font-size: 17px; margin-bottom: 36px; }
+footer { text-align: center; color: var(--muted); font-size: 13px; padding: 24px; }
+
+/* ----- Role cards (front page) ----- */
+.roles { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 24px; }
+.role-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 32px;
+  text-decoration: none;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: transform .15s, box-shadow .15s, border-color .15s;
+}
+.role-card:hover, .role-card:focus-visible {
+  transform: translateY(-3px);
+  box-shadow: 0 10px 28px rgba(19, 32, 58, .10);
+  border-color: var(--accent);
+  outline: none;
+}
+.role-card .bar { width: 64px; height: 8px; border-radius: 4px; background: var(--accent); }
+.role-card h2 { font-size: 28px; }
+.role-card p { color: var(--muted); font-size: 15px; line-height: 1.5; }
+.role-card .go { margin-top: auto; padding-top: 12px; font-weight: 600; color: var(--accent); }
+.admin    { --accent: var(--orange); }
+.lecturer { --accent: var(--blue); }
+.student  { --accent: var(--green); }
+
+/* ----- Login form ----- */
+.auth-box {
+  max-width: 440px; margin: 0 auto;
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 36px;
+}
+.auth-box .bar { width: 56px; height: 8px; border-radius: 4px; background: var(--accent); margin-bottom: 16px; }
+.auth-box h1 { font-size: 30px; margin-bottom: 6px; }
+.auth-box .hint { color: var(--muted); font-size: 14px; margin-bottom: 24px; }
+.tabs { display: flex; background: var(--bg); border-radius: 10px; padding: 4px; margin-bottom: 20px; }
+.tabs button {
+  flex: 1; border: 0; background: transparent; padding: 10px; border-radius: 8px;
+  font: inherit; font-weight: 600; color: var(--muted); cursor: pointer;
+}
+.tabs button.active { background: var(--card); color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+
+label { display: block; font-size: 14px; font-weight: 600; margin: 14px 0 6px; }
+input, select {
+  width: 100%; padding: 12px 14px; font: inherit; font-size: 15px;
+  border: 1px solid var(--line); border-radius: 10px; background: #fff; color: var(--ink);
+}
+input:focus, select:focus { outline: 2px solid var(--accent, var(--blue)); outline-offset: 1px; border-color: transparent; }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 12px 20px; border-radius: 10px; border: 0; cursor: pointer;
+  font: inherit; font-weight: 600; font-size: 15px; text-decoration: none;
+  background: var(--navy); color: #f5f3ee;
+}
+.btn:hover { background: var(--navy-2); }
+.btn:disabled { opacity: .6; cursor: wait; }
+.btn.full { width: 100%; margin-top: 22px; }
+.btn.ghost { background: transparent; color: #f5f3ee; border: 1px solid #44557a; padding: 8px 14px; font-size: 14px; }
+.btn.ghost:hover { background: var(--navy-2); }
+
+.msg { margin-top: 16px; padding: 12px 14px; border-radius: 10px; font-size: 14px; line-height: 1.45; display: none; }
+.msg.show { display: block; }
+.msg.error { background: #fbe9e7; color: var(--red); }
+.msg.ok    { background: #e7f3ea; color: var(--green); }
+.back { display: inline-block; margin-top: 20px; font-size: 14px; color: var(--muted); }
+
+/* ----- Big menu tiles (role home pages) ----- */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; }
+.tile {
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 36px; text-decoration: none; display: flex; flex-direction: column; gap: 10px;
+  transition: transform .15s, box-shadow .15s;
+}
+.tile:hover { transform: translateY(-3px); box-shadow: 0 10px 28px rgba(19,32,58,.10); }
+.tile h2 { font-size: 26px; }
+.tile p { color: var(--muted); font-size: 15px; line-height: 1.5; }
+.tile .tag { font-size: 12px; font-weight: 700; letter-spacing: .08em; color: var(--accent, var(--orange)); }
+.tile.soon { opacity: .55; pointer-events: none; }
+
+.loading { color: var(--muted); padding: 40px 0; text-align: center; }
+
+@media (max-width: 600px) {
+  .topbar { padding: 14px 16px; }
+  .brand-text span { display: none; }
+  main { padding: 32px 16px; }
+  .page-title { font-size: 28px; }
+}

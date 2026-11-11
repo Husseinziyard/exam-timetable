@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Log in — Exam Timetable</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="index.html">
+      <div class="brand-mark">ET</div>
+      <div class="brand-text"><strong>Exam Timetable</strong><span>Faculty portal</span></div>
+    </a>
+  </header>
+
+  <main>
+    <div class="auth-box" id="box">
+      <div class="bar"></div>
+      <h1 id="title">Log in</h1>
+      <p class="hint" id="hint">Use your university email.</p>
+
+      <div class="tabs">
+        <button type="button" id="tab-in" class="active">Sign in</button>
+        <button type="button" id="tab-up">Create account</button>
+      </div>
+
+      <form id="form">
+        <label for="email">Email</label>
+        <input id="email" type="email" autocomplete="email" required>
+
+        <label for="password">Password</label>
+        <input id="password" type="password" autocomplete="current-password" minlength="8" required>
+
+        <button class="btn full" id="submit" type="submit">Sign in</button>
+      </form>
+
+      <div class="msg" id="msg"></div>
+      <a class="back" href="index.html">← Back to start</a>
+    </div>
+  </main>
+
+  <script type="module">
+    import { supabase } from "./js/config.js";
+    import { getRole, HOME, ALLOWED } from "./js/auth.js";
+
+    // Which door did the user come through? (admin / lecturer / student)
+    const door = new URLSearchParams(location.search).get("role");
+    if (!ALLOWED[door]) location.replace("index.html");
+
+    const NAMES = { admin: "Admin", lecturer: "Lecturer", student: "Student" };
+    document.getElementById("box").classList.add(door);
+    document.getElementById("title").textContent = `${NAMES[door]} login`;
+    document.title = `${NAMES[door]} login — Exam Timetable`;
+
+    const form = document.getElementById("form");
+    const submit = document.getElementById("submit");
+    const msg = document.getElementById("msg");
+    const tabIn = document.getElementById("tab-in");
+    const tabUp = document.getElementById("tab-up");
+    let mode = "in"; // "in" = sign in, "up" = create account
+
+    function show(text, kind = "error") {
+      msg.textContent = text;
+      msg.className = `msg show ${kind}`;
+    }
+
+    function setMode(m) {
+      mode = m;
+      tabIn.classList.toggle("active", m === "in");
+      tabUp.classList.toggle("active", m === "up");
+      submit.textContent = m === "in" ? "Sign in" : "Create account";
+      document.getElementById("password").autocomplete = m === "in" ? "current-password" : "new-password";
+      msg.className = "msg";
+    }
+    tabIn.onclick = () => setMode("in");
+    tabUp.onclick = () => setMode("up");
+
+    if (new URLSearchParams(location.search).get("denied")) {
+      show(`This account doesn't have ${NAMES[door].toLowerCase()} access. Try a different door, or ask the admin to add your email.`);
+    }
+
+    // After a successful sign-in: check the role and send them to the right page
+    async function goHome() {
+      const role = await getRole();
+      if (ALLOWED[door].includes(role)) {
+        location.replace(HOME[door]);
+      } else {
+        await supabase.auth.signOut();
+        show(role === "none"
+          ? "Your email isn't on the faculty list yet. Ask the admin to add it."
+          : `This account is a ${role} account. Please use the ${NAMES[role]} door.`);
+      }
+    }
+
+    // If already logged in, skip the form
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session) await goHome();
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const email = document.getElementById("email").value.trim().toLowerCase();
+      const password = document.getElementById("password").value;
+      submit.disabled = true;
+      msg.className = "msg";
+
+      try {
+        if (mode === "in") {
+          const { error } = await supabase.auth.signInWithPassword({ email, password });
+          if (error) throw error;
+          await goHome();
+        } else {
+          const { error } = await supabase.auth.signUp({
+            email, password,
+            options: { emailRedirectTo: new URL(`login.html?role=${door}`, location.href).href },
+          });
+          if (error) throw error;
+          show("Account created. Check your email and click the confirmation link, then sign in here.", "ok");
+          setMode("in");
+          msg.className = "msg show ok";
+        }
+      } catch (err) {
+        const text = err.message || String(err);
+        if (/invalid login/i.test(text)) show("Wrong email or password.");
+        else if (/not confirmed/i.test(text)) show("Please confirm your email first. Check your inbox (and spam folder).");
+        else show(text);
+      } finally {
+        submit.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
