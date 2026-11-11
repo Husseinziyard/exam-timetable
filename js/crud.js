@@ -38,7 +38,11 @@ async function loadRef(name, force = false) {
   const r = REFS[name];
   const { data, error } = await supabase.from(r.table).select(r.select).order(r.order);
   if (error) throw error;
-  refCache[name] = data.map((row) => ({ id: row.id, label: r.label(row), csvKey: r.csvKey ? r.csvKey(row) : null }));
+  refCache[name] = data.map((row) => ({
+    id: row.id, label: r.label(row),
+    keys: [String(row.id), r.label(row), ...(r.csvKeys ? r.csvKeys(row) : [])]
+      .filter(Boolean).map((k) => String(k).trim().toLowerCase()),
+  }));
   return refCache[name];
 }
 export function clearRefCache() { for (const k in refCache) delete refCache[k]; }
@@ -49,6 +53,10 @@ function displayValue(f, row, refs) {
   if (f.type === "checkbox") return v ? "Yes" : '<span class="muted">No</span>';
   if (f.type === "select") return esc((f.options.find((o) => o[0] === v) || [v, v])[1]);
   if (f.type === "fk") return esc(refs[f.ref]?.find((o) => o.id === v)?.label ?? `#${v}`);
+  if (f.type === "multi") {
+    if (!v.length) return '<span class="muted">—</span>';
+    return v.map((id) => esc((refs[f.ref]?.find((o) => o.id === id)?.label ?? `#${id}`).replace(/^Intake /, ""))).join(", ");
+  }
   return esc(v);
 }
 
@@ -56,6 +64,7 @@ function displayValue(f, row, refs) {
 function cast(f, raw) {
   if (f.type === "checkbox") {
     if (typeof raw === "boolean") return raw;
+    if (f.auto && String(raw ?? "").trim() === "") return undefined;   // let the database fill it from the grade
     return /^(true|yes|y|1)$/i.test(String(raw ?? "").trim());
   }
   const s = String(raw ?? "").trim();
@@ -63,6 +72,21 @@ function cast(f, raw) {
   if (f.type === "number") { const n = Number(s); if (Number.isNaN(n)) throw new Error(`“${f.label}” must be a number`); return n; }
   if (f.lower) return s.toLowerCase();
   return s;
+}
+
+function findRef(options, raw) {
+  const k = String(raw ?? "").trim().toLowerCase();
+  return options.find((o) => o.keys.includes(k));
+}
+
+// Save the ticked items of a "multi" field into its link table
+async function saveLinks(f, ownerIds, idsByOwner) {
+  if (!ownerIds.length) return;
+  let { error } = await supabase.from(f.link).delete().in(f.linkKey, ownerIds);
+  if (error) throw error;
+  const rows = ownerIds.flatMap((oid) => (idsByOwner[oid] || []).map((rid) => ({ [f.linkKey]: oid, [f.linkRef]: rid })));
+  if (rows.length) ({ error } = await supabase.from(f.link).insert(rows));
+  if (error) throw error;
 }
 
 // =====================================================================
@@ -95,9 +119,14 @@ export async function renderSection(root, key) {
 
   async function load() {
     // load dropdown data needed by this section
-    for (const f of cfg.fields.filter((f) => f.type === "fk")) state.refs[f.ref] = await loadRef(f.ref);
+    for (const f of cfg.fields.filter((f) => f.ref)) state.refs[f.ref] = await loadRef(f.ref);
     const { data, error } = await supabase.from(cfg.table).select("*").order(cfg.order);
     if (error) { wrap.innerHTML = `<p class="msg show error">${esc(friendly(error))}</p>`; return; }
+    for (const f of cfg.fields.filter((f) => f.type === "multi")) {
+      const { data: links, error: e2 } = await supabase.from(f.link).select("*");
+      if (e2) { wrap.innerHTML = `<p class="msg show error">${esc(friendly(e2))}</p>`; return; }
+      data.forEach((row) => { row[f.key] = links.filter((l) => l[f.linkKey] === row[cfg.pk]).map((l) => l[f.linkRef]); });
+    }
     state.rows = data;
     draw();
   }
@@ -188,14 +217,30 @@ export async function renderSection(root, key) {
     document.body.appendChild(dlg);
     dlg.showModal();
     dlg.querySelector('[value="cancel"]').onclick = () => dlg.close();
+
+    // New records: tick "auto" checkboxes based on the other fields (e.g. grade)
+    const autos = cfg.fields.filter((f) => f.auto);
+    if (isNew && autos.length) {
+      const refresh = () => {
+        const rec = Object.fromEntries(cfg.fields.map((f) => [f.key, dlg.querySelector(`[name="${f.key}"]`)?.value]));
+        autos.forEach((f) => { dlg.querySelector(`[name="${f.key}"]`).checked = f.auto(rec); });
+      };
+      dlg.querySelector("form").addEventListener("change", (e) => { if (!autos.some((f) => f.key === e.target.name)) refresh(); });
+    }
     dlg.addEventListener("close", () => dlg.remove());
 
     dlg.querySelector("form").addEventListener("submit", async (e) => {
       e.preventDefault();
       const msg = dlg.querySelector(".form-msg");
-      const record = {};
+      const record = {}, multis = {};
       try {
         for (const f of cfg.fields) {
+          if (f.type === "multi") {
+            const ids = [...dlg.querySelectorAll(`[name="${f.key}"]:checked`)].map((el) => Number(el.value));
+            if (f.required && !ids.length) throw new Error(`Please tick at least one in “${f.label}”.`);
+            multis[f.key] = ids;
+            continue;
+          }
           const el = dlg.querySelector(`[name="${f.key}"]`);
           if (!el) continue;
           const v = f.type === "checkbox" ? el.checked : cast(f, el.value);
@@ -205,10 +250,14 @@ export async function renderSection(root, key) {
       } catch (err) { msg.textContent = err.message; msg.classList.add("show"); return; }
 
       const q = isNew
-        ? supabase.from(cfg.table).insert(record)
-        : supabase.from(cfg.table).update(record).eq(cfg.pk, row[cfg.pk]);
-      const { error } = await q;
+        ? supabase.from(cfg.table).insert(record).select(cfg.pk).single()
+        : supabase.from(cfg.table).update(record).eq(cfg.pk, row[cfg.pk]).select(cfg.pk).single();
+      const { data: saved, error } = await q;
       if (error) { msg.textContent = friendly(error); msg.classList.add("show"); return; }
+      try {
+        for (const f of cfg.fields.filter((f) => f.type === "multi"))
+          await saveLinks(f, [saved[cfg.pk]], { [saved[cfg.pk]]: multis[f.key] });
+      } catch (err) { msg.textContent = friendly(err); msg.classList.add("show"); return; }
       dlg.close();
       toast(isNew ? "Added." : "Saved.");
       clearRefCache();
@@ -223,6 +272,14 @@ export async function renderSection(root, key) {
     const id = `f-${f.key}`;
     if (f.type === "checkbox") {
       return `<label class="check wide"><input type="checkbox" name="${f.key}" ${v ? "checked" : ""}> ${esc(f.label)}</label>`;
+    }
+    if (f.type === "multi") {
+      const chosen = new Set(v || []);
+      const opts = state.refs[f.ref] || [];
+      return `<div class="wide"><label>${esc(f.label)}${f.required ? " *" : ""}</label>
+        <div class="multi">${opts.length ? opts.map((o) => `
+          <label class="check"><input type="checkbox" name="${f.key}" value="${o.id}" ${chosen.has(o.id) ? "checked" : ""}> ${esc(o.label)}</label>`).join("")
+          : '<p class="muted">Nothing to choose yet. Add batches first.</p>'}</div></div>`;
     }
     let input;
     if (f.type === "select" || f.type === "fk") {
@@ -259,24 +316,32 @@ export async function renderSection(root, key) {
 
     // fresh dropdown data so new departments/batches can be matched
     clearRefCache();
-    for (const f of cfg.fields.filter((f) => f.type === "fk")) state.refs[f.ref] = await loadRef(f.ref, true);
+    for (const f of cfg.fields.filter((f) => f.ref)) state.refs[f.ref] = await loadRef(f.ref, true);
 
-    const records = [], problems = [];
+    const records = [], problems = [], multiByRow = [];
     rows.forEach((r, i) => {
       try {
-        const rec = {};
+        const rec = {}, multi = {};
         for (const f of cfg.fields) {
           const col = f.csv || f.key;
           if (!(col in r)) { if (f.required) throw new Error(`missing column “${col}”`); continue; }
-          if (f.type === "fk") {
-            const raw = String(r[col] ?? "").trim().toLowerCase();
+          if (f.type === "multi") {
+            const parts = String(r[col] ?? "").split(/[;\n]/).map((x) => x.trim()).filter(Boolean);
+            if (f.required && !parts.length) throw new Error(`“${col}” is empty`);
+            multi[f.key] = parts.map((x) => {
+              const hit = findRef(state.refs[f.ref], x);
+              if (!hit) throw new Error(`no ${SECTIONS[f.ref]?.singular || "item"} matches “${x}”`);
+              return hit.id;
+            });
+          } else if (f.type === "fk") {
+            const raw = String(r[col] ?? "").trim();
             if (!raw) { if (f.required) throw new Error(`“${col}” is empty`); rec[f.key] = null; continue; }
-            const hit = state.refs[f.ref].find((o) =>
-              String(o.id) === raw || o.label.toLowerCase() === raw || (o.csvKey && o.csvKey.toLowerCase() === raw));
-            if (!hit) throw new Error(`no ${SECTIONS[f.ref]?.singular || "item"} matches “${r[col]}”`);
+            const hit = findRef(state.refs[f.ref], raw);
+            if (!hit) throw new Error(`no ${SECTIONS[f.ref]?.singular || "item"} matches “${raw}”`);
             rec[f.key] = hit.id;
           } else {
             const v = cast(f, r[col]);
+            if (v === undefined) continue;
             if (f.required && (v === null || v === "")) throw new Error(`“${col}” is empty`);
             if (f.type === "select" && v !== null && !f.options.some((o) => o[0] === v))
               throw new Error(`“${v}” is not a valid ${f.label.toLowerCase()} (use ${f.options.map((o) => o[0]).join(", ")})`);
@@ -285,6 +350,7 @@ export async function renderSection(root, key) {
         }
         if (cfg.hold && "on_hold" in r) rec.on_hold = cast({ type: "checkbox" }, r.on_hold);
         records.push(rec);
+        multiByRow.push(multi);
       } catch (err) { problems.push(`Row ${i + 2}: ${err.message}`); }
     });
 
@@ -293,8 +359,21 @@ export async function renderSection(root, key) {
       return;
     }
     // upsert = add new rows, update existing ones (matched by name/code/email)
-    const { error } = await supabase.from(cfg.table).upsert(records, { onConflict: cfg.conflict });
+    const { data: saved, error } = await supabase.from(cfg.table).upsert(records, { onConflict: cfg.conflict }).select();
     if (error) return toast(friendly(error), "error");
+    // link tables (e.g. which streams sit each module): match saved rows back by the conflict key
+    try {
+      const keyCols = cfg.conflict.split(",");
+      const keyOf = (o) => keyCols.map((k) => String(o[k] ?? "").toLowerCase()).join("|");
+      for (const f of cfg.fields.filter((f) => f.type === "multi")) {
+        const byOwner = {}, owners = [];
+        records.forEach((rec, i) => {
+          const hit = saved.find((s) => keyOf(s) === keyOf(rec));
+          if (hit && multiByRow[i][f.key]) { owners.push(hit[cfg.pk]); byOwner[hit[cfg.pk]] = multiByRow[i][f.key]; }
+        });
+        await saveLinks(f, owners, byOwner);
+      }
+    } catch (err) { return toast(friendly(err), "error"); }
     toast(`Imported ${records.length} row${records.length === 1 ? "" : "s"}.`);
     clearRefCache();
     load();

@@ -105,3 +105,7 @@ input[readonly] { background: var(--bg); color: var(--muted); }
 /* fixes */
 .form-dialog { margin: auto; }
 .toolbar label.btn { margin: 0; }
+.form-dialog .wide { grid-column: 1 / -1; }
+.multi { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 6px 14px;
+  max-height: 180px; overflow-y: auto; border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+.multi .check { font-weight: 400; }
