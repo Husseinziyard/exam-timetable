@@ -8,7 +8,7 @@
   background: var(--card); border-right: 1px solid var(--line);
   padding: 20px 12px; display: flex; flex-direction: column; justify-content: space-between; gap: 16px;
 }
-.sidebar nav { display: flex; flex-direction: column; gap: 2px; }
+.sidebar nav { display: flex; flex-direction: column; gap: 2px; flex: 1; }
 .sidebar a, .side-toggle {
   display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 10px;
   text-decoration: none; font: inherit; font-weight: 500; color: var(--ink); white-space: nowrap;
@@ -19,7 +19,19 @@
 .sidebar a.active { background: var(--navy); color: #f5f3ee; }
 .nav-label { font-size: 12px; font-weight: 700; letter-spacing: .08em; color: var(--muted); padding: 18px 14px 6px; text-transform: uppercase; }
 .side-foot { display: flex; flex-direction: column; gap: 2px; border-top: 1px solid var(--line); padding-top: 12px; }
-.side-foot a, .side-toggle { color: var(--muted); font-size: 14px; }
+.side-foot a { color: var(--muted); font-size: 14px; }
+/* Overview row: icon button (opens/closes the sidebar) + text link (opens the page) */
+.nav-row { display: flex; align-items: center; border-radius: 10px; color: var(--ink); }
+.nav-row .nav-icon {
+  background: none; border: 0; cursor: pointer; color: inherit; padding: 10px 12px 10px 14px; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+}
+.sidebar .nav-row .nav-text { flex: 1; padding: 10px 14px 10px 0; color: inherit; }
+.sidebar .nav-row .nav-text:hover { background: none; text-decoration: underline; }
+.nav-row:hover { background: var(--bg); }
+.nav-row .nav-icon:hover { background: var(--line); }
+.nav-row.active { background: var(--navy); color: #f5f3ee; }
+.nav-row.active .nav-icon:hover { background: var(--navy-2); }
 
 .app.collapsed .sidebar span, .app.collapsed .nav-label { display: none; }
 .app.collapsed .sidebar a, .app.collapsed .side-toggle { justify-content: center; padding: 10px; }
@@ -169,3 +181,23 @@ th .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; ba
   border-radius: 99px; padding: 5px 6px 5px 12px; font-size: 13px; font-weight: 600; }
 .chip-x { background: none; border: 0; cursor: pointer; color: var(--blue); font-size: 16px; line-height: 1; padding: 0 6px; border-radius: 99px; }
 .chip-x:hover { background: #d7e3f4; }
+
+/* ----- workspace: sidebar always fits the screen, only the content scrolls ----- */
+body.workspace { height: 100vh; overflow: hidden; }
+body.workspace .app { min-height: 0; height: 100%; align-items: stretch; }
+body.workspace .sidebar { position: static; height: 100%; }
+body.workspace .content { height: 100%; overflow-y: auto; }
+body.workspace .loading { flex: 1; }
+@media (max-width: 800px) {
+  body.workspace .sidebar { position: fixed; height: auto; }
+}
+
+/* collapsed: only the Overview icon shows in its row */
+.app.collapsed .nav-row .nav-text { display: none; }
+.app.collapsed .nav-row { justify-content: center; }
+.app.collapsed .nav-row .nav-icon { padding: 10px; width: 100%; }
+@media (max-width: 800px) {
+  .app.collapsed .nav-row .nav-text { display: block; }
+  .app.collapsed .nav-row { justify-content: flex-start; }
+  .app.collapsed .nav-row .nav-icon { width: auto; padding: 10px 12px 10px 14px; }
+}

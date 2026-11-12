@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="css/style.css">
   <link rel="stylesheet" href="css/admin.css">
 </head>
-<body class="admin">
+<body class="admin workspace">
   <header class="topbar">
     <div class="topbar-left">
       <button class="icon-btn mobile-only" id="menu" aria-label="Open menu"><i class="ti ti-menu-2"></i></button>
@@ -25,15 +25,18 @@
   <div class="app" id="page" hidden>
     <aside class="sidebar" id="sidebar" aria-label="Sections">
       <nav id="nav">
-        <a href="#overview" data-key="overview" title="Overview"><i class="ti ti-layout-dashboard" aria-hidden="true"></i><span>Overview</span></a>
+        <!-- Overview row: the icon opens/closes the sidebar, the word "Overview" opens the page -->
+        <div class="nav-row" data-key="overview">
+          <button class="nav-icon" id="toggle" aria-expanded="false" aria-controls="sidebar" title="Open menu">
+            <i class="ti ti-layout-dashboard" aria-hidden="true"></i>
+          </button>
+          <a href="#overview" class="nav-text">Overview</a>
+        </div>
         <div class="nav-label">Data</div>
         <!-- section links are added by the script below -->
       </nav>
       <div class="side-foot">
         <a href="admin.html" title="Admin home"><i class="ti ti-arrow-left" aria-hidden="true"></i><span>Admin home</span></a>
-        <button class="side-toggle" id="collapse" title="Collapse sidebar" aria-label="Collapse sidebar">
-          <i class="ti ti-layout-sidebar-left-collapse" aria-hidden="true"></i><span>Collapse</span>
-        </button>
       </div>
     </aside>
     <div class="backdrop" id="backdrop"></div>
@@ -58,30 +61,33 @@
       NAV.forEach((k) => nav.insertAdjacentHTML("beforeend",
         `<a href="#${k}" data-key="${k}" title="${SECTIONS[k].title}"><i class="ti ${ICONS[k]}" aria-hidden="true"></i><span>${SECTIONS[k].title}</span></a>`));
 
-      // ----- sidebar: collapse on desktop (remembered), slide-in on phones -----
-      const collapseBtn = document.getElementById("collapse");
-      const setCollapsed = (on) => {
-        app.classList.toggle("collapsed", on);
-        collapseBtn.querySelector("i").className = `ti ${on ? "ti-layout-sidebar-left-expand" : "ti-layout-sidebar-left-collapse"}`;
-        collapseBtn.querySelector("span").textContent = on ? "Expand" : "Collapse";
-        collapseBtn.title = on ? "Expand sidebar" : "Collapse sidebar";
-        try { localStorage.setItem("sidebarCollapsed", on ? "1" : "0"); } catch {}
+      // ----- sidebar: closed by default; the Overview icon opens it, click again to close -----
+      const toggle = document.getElementById("toggle");
+      const isPhone = () => matchMedia("(max-width: 800px)").matches;
+      const isOpen = () => (isPhone() ? app.classList.contains("open") : !app.classList.contains("collapsed"));
+      const setOpen = (open) => {
+        if (isPhone()) app.classList.toggle("open", open);   // phones: slide-in panel
+        else app.classList.toggle("collapsed", !open);        // desktop: icon strip when closed
+        toggle.setAttribute("aria-expanded", String(open));
+        toggle.title = open ? "Close menu" : "Open menu";
       };
-      try { setCollapsed(localStorage.getItem("sidebarCollapsed") === "1"); } catch {}
-      collapseBtn.addEventListener("click", () => setCollapsed(!app.classList.contains("collapsed")));
-      document.getElementById("menu").addEventListener("click", () => app.classList.add("open"));
-      document.getElementById("backdrop").addEventListener("click", () => app.classList.remove("open"));
+      app.classList.add("collapsed");
+      setOpen(false);
+      toggle.addEventListener("click", () => setOpen(!isOpen()));
+      document.getElementById("menu").addEventListener("click", () => setOpen(true));
+      document.getElementById("backdrop").addEventListener("click", () => setOpen(false));
 
       // ----- page switching using the part of the URL after "#" -----
       async function route() {
         const key = location.hash.slice(1) || "overview";
         app.classList.remove("open");
-        nav.querySelectorAll("a").forEach((a) => a.classList.toggle("active", a.dataset.key === key));
+        nav.querySelectorAll("[data-key]").forEach((a) => a.classList.toggle("active", a.dataset.key === key));
         if (SECTIONS[key]) await renderSection(content, key);
         else await renderOverview(content, (k) => (location.hash = k));
         content.focus();
       }
       window.addEventListener("hashchange", route);
+      content.addEventListener("scroll", () => document.querySelector(".col-pop")?.remove());
       route();
     }
   </script>
