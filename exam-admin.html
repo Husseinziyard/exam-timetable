@@ -47,7 +47,8 @@
   <script type="module">
     import { requireRole, setupHeader } from "./js/auth.js";
     import { SECTIONS, NAV, ICONS } from "./js/admin-data.js";
-    import { renderSection, renderOverview } from "./js/crud.js";
+    import { renderSection } from "./js/crud.js";
+    import { renderOverview, renderTimetable } from "./js/timetable.js";
 
     const me = await requireRole("admin");
     if (me) {
@@ -81,9 +82,12 @@
       async function route() {
         const key = location.hash.slice(1) || "overview";
         app.classList.remove("open");
-        nav.querySelectorAll("[data-key]").forEach((a) => a.classList.toggle("active", a.dataset.key === key));
+        const go = (k) => (location.hash = k);
+        const navKey = key.startsWith("timetable/") ? "overview" : key;
+        nav.querySelectorAll("[data-key]").forEach((a) => a.classList.toggle("active", a.dataset.key === navKey));
         if (SECTIONS[key]) await renderSection(content, key);
-        else await renderOverview(content, (k) => (location.hash = k));
+        else if (key.startsWith("timetable/")) await renderTimetable(content, Number(key.split("/")[1]), go);
+        else await renderOverview(content, go);
         content.focus();
       }
       window.addEventListener("hashchange", route);
