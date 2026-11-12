@@ -95,7 +95,7 @@ async function saveLinks(f, ownerIds, idsByOwner) {
 export async function renderSection(root, key) {
   const cfg = SECTIONS[key];
   // colFilters: { fieldKey: { op: "contains" | "equals" | "starts" | "not", value: "text" } }
-  const state = { rows: [], refs: {}, q: "", showHeld: true, colFilters: {}, sort: null };
+  const state = { rows: [], refs: {}, q: "", showHeld: true, colFilters: {}, sort: null, selected: new Set(), visible: [] };
 
   root.innerHTML = `
     <div class="section-head">
@@ -113,6 +113,13 @@ export async function renderSection(root, key) {
       <button class="btn" data-act="add">+ Add</button>
     </div>
     <div class="chips"></div>
+    <div class="bulkbar" hidden role="region" aria-label="Selected items">
+      <span class="bulk-count"></span>
+      ${cfg.hold ? `<button class="btn light small" data-bulk="hold"><i class="ti ti-player-pause"></i> Hold</button>
+      <button class="btn light small" data-bulk="release"><i class="ti ti-player-play"></i> Release</button>` : ""}
+      <button class="btn light small danger-btn" data-bulk="delete"><i class="ti ti-trash"></i> Delete</button>
+      <button class="link" data-bulk="clear">Clear selection</button>
+    </div>
     <div class="table-wrap"><p class="loading">Loading…</p></div>
     <p class="count muted"></p>`;
 
@@ -184,27 +191,85 @@ export async function renderSection(root, key) {
       root.querySelector(".count").textContent = "";
       return;
     }
+    state.visible = rows.map((r) => String(r[cfg.pk]));
+    const allOn = rows.length > 0 && state.visible.every((k) => state.selected.has(k));
     wrap.innerHTML = `
       <table class="data">
-        <thead><tr>${listFields.map((f) => {
+        <thead><tr><th class="sel-col"><input type="checkbox" class="sel-all" aria-label="Select all shown rows" ${allOn ? "checked" : ""}></th>${listFields.map((f) => {
           const sorted = state.sort?.key === f.key, filtered = !!state.colFilters[f.key];
           return `<th class="${filtered ? "filtered" : ""}" aria-sort="${sorted ? (state.sort.dir > 0 ? "ascending" : "descending") : "none"}">
             <div class="th-inner"><span>${esc(shortLabel(f))}${sorted ? (state.sort.dir > 0 ? " ▲" : " ▼") : ""}${filtered ? ' <span class="dot" title="Filtered"></span>' : ""}</span>
             <button class="colmenu" data-col="${f.key}" aria-label="Sort or filter ${esc(shortLabel(f))}" aria-haspopup="true"><i class="ti ti-dots-vertical" aria-hidden="true"></i></button></div></th>`;
         }).join("")}${cfg.hold ? "<th>Status</th>" : ""}<th class="actions-col"></th></tr></thead>
         <tbody>${rows.map((r) => `
-          <tr class="${r.on_hold ? "held" : ""}" data-pk="${esc(r[cfg.pk])}" tabindex="0" title="Click to see and edit all details">
+          <tr class="${r.on_hold ? "held" : ""} ${state.selected.has(String(r[cfg.pk])) ? "selected" : ""}" data-pk="${esc(r[cfg.pk])}" tabindex="0" title="Click to see and edit all details">
+            <td class="sel-col"><input type="checkbox" class="sel" aria-label="Select this row" ${state.selected.has(String(r[cfg.pk])) ? "checked" : ""}></td>
             ${listFields.map((f) => `<td>${displayValue(f, r, state.refs)}</td>`).join("")}
             ${cfg.hold ? `<td>${r.on_hold ? '<span class="badge hold">On hold</span>' : '<span class="badge active">Active</span>'}</td>` : ""}
             <td class="actions">
               ${cfg.hold ? `<button class="link" data-act="hold">${r.on_hold ? "Release" : "Hold"}</button>` : ""}
               <button class="link danger" data-act="delete">Delete</button>
             </td>
-          </tr>`).join("") || `<tr><td colspan="${listFields.length + 2}" class="muted" style="text-align:center;padding:32px">Nothing matches these filters.</td></tr>`}
+          </tr>`).join("") || `<tr><td colspan="${listFields.length + 3}" class="muted" style="text-align:center;padding:32px">Nothing matches these filters.</td></tr>`}
         </tbody>
       </table>`;
     root.querySelector(".count").textContent =
       `Showing ${rows.length} of ${state.rows.length}` + (cfg.hold ? ` · ${state.rows.filter((r) => r.on_hold).length} on hold` : "");
+    const some = !allOn && state.visible.some((k) => state.selected.has(k));
+    const head = wrap.querySelector(".sel-all");
+    if (head) head.indeterminate = some;
+    drawBulkbar();
+  }
+
+  // ----- selecting several rows -----
+  function drawBulkbar() {
+    const bar = root.querySelector(".bulkbar");
+    const n = state.selected.size;
+    bar.hidden = n === 0;
+    if (!n) return;
+    const hidden = [...state.selected].filter((k) => !state.visible.includes(k)).length;
+    bar.querySelector(".bulk-count").textContent =
+      `${n} selected` + (hidden ? ` (${hidden} not shown by the current filters)` : "");
+  }
+
+  async function bulk(action) {
+    if (action === "clear") { state.selected.clear(); return draw(); }
+    let rows = state.rows.filter((r) => state.selected.has(String(r[cfg.pk])));
+    if (!rows.length) return;
+    // safety: never hold or delete admin accounts in bulk (so nobody locks themselves out)
+    let skipped = 0;
+    if (cfg.table === "lecturers" && action !== "release") {
+      skipped = rows.filter((r) => r.is_admin).length;
+      rows = rows.filter((r) => !r.is_admin);
+      if (!rows.length) return toast("Admin accounts can't be held or deleted in bulk.", "error");
+    }
+    const ids = rows.map((r) => r[cfg.pk]);
+    const what = `${ids.length} ${ids.length === 1 ? cfg.singular : (cfg.title.toLowerCase())}`;
+    if (action === "delete" && !confirm(`Delete ${what}? This cannot be undone.` +
+      (cfg.hold ? "\n\nTip: use Hold if you only want to leave them out for now." : ""))) return;
+
+    let failed = 0;
+    if (action === "hold" || action === "release") {
+      const { error } = await supabase.from(cfg.table).update({ on_hold: action === "hold" }).in(cfg.pk, ids);
+      if (error) return toast(friendly(error), "error");
+    } else {
+      const { error } = await supabase.from(cfg.table).delete().in(cfg.pk, ids);
+      if (error?.code === "23503") {
+        // some are still in use: delete the ones we can, keep the rest
+        for (const id of ids) {
+          const { error: e1 } = await supabase.from(cfg.table).delete().eq(cfg.pk, id);
+          if (e1) failed++;
+        }
+      } else if (error) return toast(friendly(error), "error");
+      clearRefCache();
+    }
+    const done = ids.length - failed;
+    const verb = { hold: "put on hold", release: "released", delete: "deleted" }[action];
+    toast(`${done} ${verb}.` +
+      (failed ? ` ${failed} could not be deleted because they are still used elsewhere — hold them instead.` : "") +
+      (skipped ? ` ${skipped} admin account${skipped > 1 ? "s" : ""} skipped.` : ""), failed ? "error" : "ok");
+    state.selected.clear();
+    load();
   }
 
   // ----- the ⋮ column menu: sort + filter -----
@@ -294,7 +359,29 @@ export async function renderSection(root, key) {
   root.querySelector('[data-act="template"]').addEventListener("click", downloadTemplate);
   root.querySelector(".csv-file").addEventListener("change", (e) => { if (e.target.files[0]) importCsv(e.target.files[0]); e.target.value = ""; });
 
+  root.querySelector(".bulkbar").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-bulk]");
+    if (b) bulk(b.dataset.bulk);
+  });
+  wrap.addEventListener("change", (e) => {
+    if (e.target.matches(".sel-all")) {
+      state.visible.forEach((k) => (e.target.checked ? state.selected.add(k) : state.selected.delete(k)));
+      return draw();
+    }
+    if (e.target.matches(".sel")) {
+      const k = e.target.closest("tr").dataset.pk;
+      e.target.checked ? state.selected.add(k) : state.selected.delete(k);
+      e.target.closest("tr").classList.toggle("selected", e.target.checked);
+      const head = wrap.querySelector(".sel-all");
+      const all = state.visible.every((x) => state.selected.has(x));
+      head.checked = all;
+      head.indeterminate = !all && state.visible.some((x) => state.selected.has(x));
+      drawBulkbar();
+    }
+  });
+
   wrap.addEventListener("click", async (e) => {
+    if (e.target.closest(".sel-col")) return;    // ticking a box doesn't open the details
     const menuBtn = e.target.closest(".colmenu");
     if (menuBtn) { e.stopPropagation(); return openMenu(menuBtn); }
     const tr = e.target.closest("tr[data-pk]");

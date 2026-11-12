@@ -302,3 +302,18 @@ td.over { color: var(--red); font-weight: 700; }
   .grid-wrap { max-height: none; overflow: visible; border: 0; }
   .paper { border: 1px solid #999; }
 }
+
+/* ----- selecting several rows ----- */
+.sel-col { width: 1%; padding-right: 0 !important; }
+.sel-col input { width: 18px; height: 18px; cursor: pointer; accent-color: var(--navy); }
+table.data tr.selected td { background: #eef3fa; }
+.bulkbar {
+  position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  background: var(--navy); color: #f5f3ee; padding: 10px 14px; border-radius: 12px; margin-bottom: 12px;
+}
+.bulkbar[hidden] { display: none; }
+.bulk-count { font-weight: 600; margin-right: 6px; }
+.bulkbar .btn.light { background: #f5f3ee; border-color: transparent; }
+.bulkbar .danger-btn { color: var(--red); }
+.bulkbar .link { color: #c9d1de; margin-left: auto; }
+.bulkbar .link:hover { background: var(--navy-2); color: #fff; }
