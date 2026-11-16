@@ -6,7 +6,10 @@
   <title>Lecturer — Exam Timetable</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
   <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/admin.css">
+  <link rel="stylesheet" href="css/viewer.css">
 </head>
 <body class="lecturer">
   <header class="topbar">
@@ -17,32 +20,277 @@
     <div class="topbar-right"><span id="who"></span><button class="btn ghost" id="logout">Log out</button></div>
   </header>
 
-  <main id="page" hidden>
-    <h1 class="page-title">My exam duties</h1>
-    <p class="page-sub">Your invigilation schedule, and where your colleagues are.</p>
-
-    <div class="tiles">
-      <a class="tile soon" href="#">
-        <span class="tag">COMING NEXT</span>
-        <h2>Personal schedule</h2>
-        <p>Whole timetable, next day and weekly plan, each downloadable as a PDF.</p>
-      </a>
-      <a class="tile soon" href="#">
-        <span class="tag">COMING NEXT</span>
-        <h2>Other schedule</h2>
-        <p>Filter by lecturer, class or date to see where colleagues are assigned.</p>
-      </a>
+  <main class="viewer" id="page" hidden>
+    <div class="viewer-head">
+      <div>
+        <h1 class="page-title" id="hello">My exam duties</h1>
+        <p class="page-sub" id="sub"></p>
+      </div>
+      <label class="period-pick"><span class="muted small">Timetable</span><select id="period" aria-label="Timetable"></select></label>
     </div>
+
+    <div class="tabs v-tabs" role="tablist">
+      <button role="tab" data-tab="next"><i class="ti ti-clock"></i> Next duty</button>
+      <button role="tab" data-tab="week"><i class="ti ti-calendar-week"></i> Weekly plan</button>
+      <button role="tab" data-tab="all"><i class="ti ti-list"></i> All my duties</button>
+      <button role="tab" data-tab="others"><i class="ti ti-users"></i> Other schedule</button>
+      <button role="tab" data-tab="batch"><i class="ti ti-school"></i> Batch timetable</button>
+    </div>
+    <section id="panel" class="v-panel"></section>
   </main>
   <p class="loading" id="loading">Checking your login…</p>
 
   <script type="module">
+    import { supabase } from "./js/config.js";
     import { requireRole, setupHeader } from "./js/auth.js";
+    import { esc, fmtDate, todayIso, ROLE_NAMES, loadPeriod, publishedPeriods, downloadPdf,
+             details, hallDetailsHtml, seatMap, periodPicker } from "./js/viewer.js";
+
     const me = await requireRole("lecturer");
     if (me) {
       setupHeader(me.user);
       document.getElementById("loading").remove();
       document.getElementById("page").hidden = false;
+      const panel = document.getElementById("panel");
+
+      // who am I in the staff list?
+      const { data: mine } = await supabase.from("lecturers").select("id,title,full_name,grade")
+        .eq("email", me.user.email.toLowerCase()).maybeSingle();
+      const myName = mine ? `${mine.title ? mine.title + " " : ""}${mine.full_name}` : me.user.email;
+      document.getElementById("hello").textContent = mine ? `Hello, ${myName}` : "My exam duties";
+
+      const periods = await publishedPeriods().catch(() => []);
+      if (!periods.length) {
+        document.querySelector(".v-tabs").hidden = true;
+        document.querySelector(".period-pick").hidden = true;
+        panel.innerHTML = `<div class="empty table-wrap"><p><strong>No timetable has been published yet.</strong></p>
+          <p class="muted">Your duties will appear here as soon as the admin publishes the exam timetable.</p></div>`;
+      } else {
+        let T = null, tab = "next", weekStart = null;
+        const tabs = document.querySelectorAll(".v-tabs button");
+
+        async function openPeriod(id) {
+          panel.innerHTML = `<p class="loading">Loading…</p>`;
+          T = await loadPeriod(id);
+          const p = periods.find((x) => x.id === id);
+          document.getElementById("sub").textContent =
+            `${p.name} · ${fmtDate(p.start_date, { day: "numeric", month: "long" })} – ${fmtDate(p.end_date, { day: "numeric", month: "long", year: "numeric" })}`;
+          weekStart = null;
+          show(tab);
+        }
+        const myHalls = () => mine ? T.halls.filter((h) => h.duties.some((d) => d.staffId === mine.id)) : [];
+        const myRole = (h) => ROLE_NAMES[h.duties.find((d) => d.staffId === mine.id)?.role] || "";
+        const coLecturers = (h) => h.duties.filter((d) => d.staffId !== mine?.id).map((d) => `${d.name} (${ROLE_NAMES[d.role]})`);
+        const papersText = (h) => h.papers.map((p) => `${p.exam?.module.code} ${p.exam?.module.name}`).join("; ");
+        const batchText = (h) => [...new Set(h.papers.flatMap((p) => p.exam?.streams.map((b) => `Intake ${b.intake} ${b.stream}`) || []))].join(", ");
+        const timeOf = (h) => h.papers.map((p) => p.exam?.time).filter(Boolean)[0] || (h.session === "AM" ? "09:00" : "13:00");
+        const noProfile = `<div class="empty table-wrap"><p><strong>Your email isn't linked to a staff record.</strong></p>
+          <p class="muted">Ask the admin to add <b>${esc(me.user.email)}</b> to your record in Staff.</p></div>`;
+
+        // the PDF columns: date, time, exam hall, no. of students, module, batch, co-lecturers
+        const dutyRows = (hs) => hs.map((h) => [fmtDate(h.date), timeOf(h), h.room.name, String(h.students), myRole(h), papersText(h), batchText(h), coLecturers(h).join("\n")]);
+        const dutyHead = ["Date", "Time", "Exam hall", "Students", "My role", "Module", "Batch", "Co-lecturers"];
+
+        function dutyTable(hs) {
+          return `<div class="table-wrap"><table class="data">
+            <thead><tr><th>Date</th><th>Time</th><th>Exam hall</th><th>Students</th><th>My role</th><th>Module</th><th>Batch</th><th>Co-lecturers</th></tr></thead>
+            <tbody>${hs.map((h) => `<tr data-hall="${h.id}" tabindex="0" title="Click to see the hall and seating">
+              <td><b>${fmtDate(h.date, { weekday: "short", day: "2-digit", month: "short" })}</b></td><td>${timeOf(h)}</td>
+              <td><b>${esc(h.room.name)}</b></td><td>${h.students}</td><td>${myRole(h)}</td>
+              <td>${h.papers.map((p) => `<div><b>${esc(p.exam?.module.code)}</b> ${esc(p.exam?.module.name)}</div>`).join("")}</td>
+              <td>${esc(batchText(h))}</td>
+              <td class="small">${coLecturers(h).map(esc).join("<br>")}</td></tr>`).join("")
+              || `<tr><td colspan="8" class="muted center">No duties.</td></tr>`}</tbody></table></div>`;
+        }
+
+        // ----- tab: next duty -----
+        function nextView() {
+          if (!mine) return noProfile;
+          const today = todayIso();
+          const upcoming = myHalls().filter((h) => h.date >= today);
+          const h = upcoming[0];
+          if (!h) return `<div class="empty table-wrap"><p><strong>No upcoming duties.</strong></p>
+            <p class="muted">${myHalls().length ? "All your duties in this timetable are in the past." : "You have no duties in this timetable."}</p></div>`;
+          const later = upcoming.slice(1, 4);
+          return `<div class="next-card">
+            <div class="next-info">
+              <span class="tag">YOUR NEXT DUTY</span>
+              <h2>${fmtDate(h.date, { weekday: "long", day: "numeric", month: "long" })}</h2>
+              <p class="next-time">${timeOf(h)} · ${h.session === "AM" ? "Morning" : "Afternoon"} session</p>
+              <dl class="kv">
+                <dt>Exam hall</dt><dd><b>${esc(h.room.name)}</b>${h.room.building ? ` <span class="muted">· ${esc(h.room.building)}</span>` : ""}</dd>
+                <dt>Your role</dt><dd>${myRole(h)}</dd>
+                <dt>Module</dt><dd>${h.papers.map((p) => `<b>${esc(p.exam?.module.code)}</b> ${esc(p.exam?.module.name)}`).join("<br>")}</dd>
+                <dt>Batch</dt><dd>${esc(batchText(h))}</dd>
+                <dt>Students</dt><dd>${h.students}</dd>
+                <dt>With</dt><dd>${coLecturers(h).map(esc).join("<br>") || "—"}</dd>
+              </dl>
+              <button class="btn" id="pdf-next"><i class="ti ti-download"></i> Download PDF</button>
+            </div>
+            <div class="map-box" data-hall="${h.id}" title="Click to enlarge">${seatMap(h.room, { used: h.students })}
+              <p class="legend small"><span class="key on"></span> students <span class="key"></span> empty seat</p></div>
+          </div>
+          ${later.length ? `<h3 class="gen-h">Coming up after that</h3>${dutyTable(later)}` : ""}`;
+        }
+
+        // ----- tab: weekly plan -----
+        function weekView() {
+          if (!mine) return noProfile;
+          const mon = (iso) => { const d = new Date(iso + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)); return d.toISOString().slice(0, 10); };
+          const add = (iso, n) => { const d = new Date(iso + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+          if (!weekStart) {
+            const t = todayIso(), first = myHalls()[0]?.date || T.halls[0]?.date || t;
+            const p = periods.find((x) => x.id === Number(document.getElementById("period").value));
+            // inside the exam period: this week (or next week on a weekend); otherwise the week of my first duty
+            const wd = new Date(t + "T00:00:00Z").getUTCDay();
+            const base = t >= p.start_date && t <= p.end_date ? (wd === 0 || wd === 6 ? add(t, wd === 6 ? 2 : 1) : t) : first;
+            weekStart = mon(base);
+          }
+          const end = add(weekStart, 6);
+          const hs = myHalls().filter((h) => h.date >= weekStart && h.date <= end);
+          return `<div class="week-nav">
+              <button class="btn light small" data-week="-7" aria-label="Previous week"><i class="ti ti-chevron-left"></i></button>
+              <h3>Week of ${fmtDate(weekStart, { day: "numeric", month: "long" })} – ${fmtDate(add(weekStart, 4), { day: "numeric", month: "long", year: "numeric" })}</h3>
+              <button class="btn light small" data-week="7" aria-label="Next week"><i class="ti ti-chevron-right"></i></button>
+              <span class="spacer"></span>
+              <button class="btn" id="pdf-week"><i class="ti ti-download"></i> Download PDF</button>
+            </div>
+            <div class="week-grid">${[0, 1, 2, 3, 4].map((i) => {
+              const d = add(weekStart, i);
+              const day = hs.filter((h) => h.date === d);
+              return `<div class="week-day ${d === todayIso() ? "today" : ""}">
+                <p class="wd">${fmtDate(d, { weekday: "long" })}<span>${fmtDate(d, { day: "numeric", month: "short" })}</span></p>
+                ${day.map((h) => `<button class="duty-chip ${h.session.toLowerCase()}" data-hall="${h.id}">
+                  <b>${timeOf(h)}</b><span>${esc(h.room.name)} · ${myRole(h)}</span>
+                  <span class="muted">${esc(h.papers.map((p) => p.exam?.module.code).join(", "))}</span></button>`).join("") || '<p class="muted small">Free</p>'}
+              </div>`;
+            }).join("")}</div>`;
+        }
+
+        // ----- tab: all duties -----
+        function allView() {
+          if (!mine) return noProfile;
+          const hs = myHalls();
+          const count = (r) => hs.filter((h) => h.duties.some((d) => d.staffId === mine.id && d.role === r)).length;
+          return `<div class="toolbar"><p class="muted">${hs.length} duties · ${count("SUPERVISOR")} as supervisor · ${count("INVIGILATOR")} as invigilator</p>
+            <span class="spacer"></span><button class="btn" id="pdf-all"><i class="ti ti-download"></i> Download PDF</button></div>${dutyTable(hs)}`;
+        }
+
+        // ----- tab: other schedule (colleagues) -----
+        let filt = { staff: "", room: "", date: "" };
+        function othersView() {
+          const staffWithDuties = [...new Map(T.halls.flatMap((h) => h.duties.map((d) => [d.staffId, d.name]))).entries()]
+            .sort((a, b) => a[1].localeCompare(b[1]));
+          const rooms = [...new Map(T.halls.map((h) => [h.room.id, h.room.name])).entries()].sort((a, b) => a[1].localeCompare(b[1], undefined, { numeric: true }));
+          const dates = [...new Set(T.halls.map((h) => h.date))].sort();
+          const hs = T.halls.filter((h) =>
+            (!filt.staff || h.duties.some((d) => String(d.staffId) === filt.staff)) &&
+            (!filt.room || String(h.room.id) === filt.room) && (!filt.date || h.date === filt.date));
+          const opt = (v, l, cur) => `<option value="${v}" ${String(v) === cur ? "selected" : ""}>${esc(l)}</option>`;
+          const roleCell = (h, r) => h.duties.filter((d) => d.role === r).map((d) =>
+            String(d.staffId) === filt.staff ? `<mark>${esc(d.name)}</mark>` : esc(d.name)).join("<br>") || "—";
+          return `<div class="filters-row">
+              <label><span>Lecturer</span><select data-f="staff"><option value="">Everyone</option>${staffWithDuties.map(([id, n]) => opt(id, n, filt.staff)).join("")}</select></label>
+              <label><span>Exam hall</span><select data-f="room"><option value="">All halls</option>${rooms.map(([id, n]) => opt(id, n, filt.room)).join("")}</select></label>
+              <label><span>Date</span><select data-f="date"><option value="">All dates</option>${dates.map((d) => opt(d, fmtDate(d), filt.date)).join("")}</select></label>
+              ${filt.staff || filt.room || filt.date ? '<button class="link" data-clear-f>Clear filters</button>' : ""}
+            </div>
+            <div class="table-wrap"><table class="data">
+              <thead><tr><th>Date</th><th>Time</th><th>Exam hall</th><th>Papers</th><th>Students</th><th>Supervisor</th><th>Invigilators</th><th>Hall attendant</th></tr></thead>
+              <tbody>${hs.slice(0, 400).map((h) => `<tr data-hall="${h.id}" tabindex="0">
+                <td>${fmtDate(h.date, { weekday: "short", day: "2-digit", month: "short" })}</td><td>${timeOf(h)}</td><td><b>${esc(h.room.name)}</b></td>
+                <td>${h.papers.map((p) => `<b>${esc(p.exam?.module.code)}</b>`).join(", ")}</td><td>${h.students}</td>
+                <td>${roleCell(h, "SUPERVISOR")}</td><td>${roleCell(h, "INVIGILATOR")}</td><td>${roleCell(h, "ATTENDANT")}</td></tr>`).join("")
+                || `<tr><td colspan="8" class="muted center">Nothing matches.</td></tr>`}</tbody></table></div>`;
+        }
+
+        // ----- tab: batch timetable (for batch coordinators) -----
+        let batchId = "";
+        function batchView() {
+          const streams = [...new Map(T.exams.flatMap((e) => e.streams.map((b) => [b.id, b]))).values()]
+            .sort((a, b) => b.intake - a.intake || String(a.stream).localeCompare(String(b.stream)));
+          if (!batchId && streams[0]) batchId = String(streams[0].id);
+          const b = T.batchById[batchId];
+          const ex = T.exams.filter((e) => e.streams.some((s) => String(s.id) === batchId));
+          return `<div class="toolbar">
+              <label class="inline-pick"><span class="muted small">Batch</span>
+                <select id="batch-pick">${streams.map((s) => `<option value="${s.id}" ${String(s.id) === batchId ? "selected" : ""}>Intake ${s.intake} · ${esc(s.stream || s.degree)} · Semester ${esc(s.semester)}</option>`).join("")}</select></label>
+              <span class="spacer"></span>
+              <button class="btn" id="pdf-batch" ${b ? "" : "disabled"}><i class="ti ti-download"></i> Download PDF</button>
+            </div>
+            ${b ? `<p class="muted">${ex.length} papers · ${b.student_count ?? "?"} students</p>` : ""}
+            ${studentTable(ex)}`;
+        }
+        function studentTable(ex) {
+          return `<div class="table-wrap"><table class="data">
+            <thead><tr><th>Date</th><th>Module</th><th>Exam hall</th><th>Time</th><th>Supervisor</th></tr></thead>
+            <tbody>${ex.map((e) => `<tr data-exam="${e.id}" tabindex="0" title="Click for halls and seating">
+              <td><b>${fmtDate(e.date, { weekday: "short", day: "2-digit", month: "short" })}</b></td>
+              <td><b>${esc(e.module.code)}</b> ${esc(e.module.name)}</td>
+              <td>${e.halls.map((x) => esc(x.hall.room.name)).join(", ") || "—"}</td>
+              <td>${e.time}</td>
+              <td class="small">${[...new Set(e.halls.flatMap((x) => x.hall.duties.filter((d) => d.role === "SUPERVISOR").map((d) => d.name)))].map(esc).join("<br>") || "—"}</td>
+            </tr>`).join("") || `<tr><td colspan="5" class="muted center">No exams for this batch.</td></tr>`}</tbody></table></div>`;
+        }
+
+        function show(t) {
+          tab = t;
+          tabs.forEach((b) => { b.classList.toggle("active", b.dataset.tab === t); b.setAttribute("aria-selected", b.dataset.tab === t); });
+          panel.innerHTML = { next: nextView, week: weekView, all: allView, others: othersView, batch: batchView }[t]();
+        }
+        tabs.forEach((b) => b.addEventListener("click", () => show(b.dataset.tab)));
+
+        // ----- clicks inside the panel -----
+        panel.addEventListener("click", async (e) => {
+          const hallEl = e.target.closest("[data-hall]");
+          const examEl = e.target.closest("[data-exam]");
+          const wk = e.target.closest("[data-week]");
+          if (wk) { const d = new Date(weekStart + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + Number(wk.dataset.week)); weekStart = d.toISOString().slice(0, 10); return show("week"); }
+          if (e.target.closest("[data-clear-f]")) { filt = { staff: "", room: "", date: "" }; return show("others"); }
+          const who = mine ? myName : me.user.email;
+          if (e.target.closest("#pdf-next")) {
+            const h = myHalls().find((x) => x.date >= todayIso());
+            return downloadPdf({ title: `Next exam duty — ${who}`, subtitle: document.getElementById("sub").textContent, head: dutyHead, body: dutyRows([h]), filename: "next-duty.pdf" });
+          }
+          if (e.target.closest("#pdf-week")) {
+            const end = new Date(weekStart + "T00:00:00Z"); end.setUTCDate(end.getUTCDate() + 6);
+            const hs = myHalls().filter((h) => h.date >= weekStart && h.date <= end.toISOString().slice(0, 10));
+            return downloadPdf({ title: `Weekly exam duties — ${who}`, subtitle: `Week of ${fmtDate(weekStart, { day: "numeric", month: "long", year: "numeric" })}`, head: dutyHead, body: dutyRows(hs), filename: `duties-week-${weekStart}.pdf` });
+          }
+          if (e.target.closest("#pdf-all")) {
+            return downloadPdf({ title: `Exam duties — ${who}`, subtitle: document.getElementById("sub").textContent, head: dutyHead, body: dutyRows(myHalls()), filename: "my-exam-duties.pdf" });
+          }
+          if (e.target.closest("#pdf-batch")) {
+            const b = T.batchById[batchId];
+            const ex = T.exams.filter((x) => x.streams.some((s) => String(s.id) === batchId));
+            return downloadPdf({
+              title: `Exam timetable — Intake ${b.intake} · ${b.stream || b.degree} · Semester ${b.semester}`,
+              subtitle: document.getElementById("sub").textContent, landscape: false,
+              head: ["Date", "Module code", "Module", "Exam hall", "Time"],
+              body: ex.map((x) => [fmtDate(x.date), x.module.code, x.module.name, x.halls.map((y) => y.hall.room.name).join(", "), x.time]),
+              filename: `exam-timetable-intake-${b.intake}-${(b.stream || "batch").replace(/\W+/g, "-")}.pdf` });
+          }
+          if (hallEl) {
+            const h = T.hallById[Number(hallEl.dataset.hall)];
+            return details(`<h2>${esc(h.room.name)}</h2>${hallDetailsHtml(T, h, { myStaffId: mine?.id })}`);
+          }
+          if (examEl) {
+            const ex = T.examById[Number(examEl.dataset.exam)];
+            return details(`<h2>${esc(ex.module.code)} · ${esc(ex.module.name)}</h2>
+              <p class="muted">${fmtDate(ex.date, { weekday: "long", day: "numeric", month: "long", year: "numeric" })} · ${ex.time}
+              · ${ex.streams.map((b) => `Intake ${b.intake} ${esc(b.stream)}`).join(", ")}</p>
+              ${ex.halls.map((x) => `<h3 class="gen-h">${esc(x.hall.room.name)} · ${x.seats} students for this paper</h3>${hallDetailsHtml(T, x.hall, { myStaffId: mine?.id })}`).join("")}`);
+          }
+        });
+        panel.addEventListener("change", (e) => {
+          if (e.target.matches("[data-f]")) { filt[e.target.dataset.f] = e.target.value; show("others"); }
+          if (e.target.matches("#batch-pick")) { batchId = e.target.value; show("batch"); }
+        });
+        panel.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.matches("[data-hall],[data-exam]")) e.target.click(); });
+
+        const first = periodPicker(document.getElementById("period"), periods, openPeriod);
+        openPeriod(first);
+      }
     }
   </script>
 </body>

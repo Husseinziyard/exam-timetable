@@ -1,0 +1,84 @@
+/* ===== Lecturer + student pages ===== */
+main.viewer { max-width: 1240px; }
+.viewer-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 20px; flex-wrap: wrap; margin-bottom: 20px; }
+.viewer-head .page-sub { margin-bottom: 0; }
+.head-actions { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.period-pick, .inline-pick { display: flex; flex-direction: column; gap: 4px; margin: 0; font-weight: 400; }
+.period-pick[hidden] { display: none; }
+.period-pick select, .inline-pick select { width: auto; min-width: 260px; }
+.center { text-align: center; padding: 28px !important; }
+
+.v-tabs { max-width: none; flex-wrap: wrap; margin-bottom: 22px; background: #ebe8e1; }
+.v-tabs button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-width: 150px; }
+.v-tabs[hidden] { display: none; }
+
+/* next duty */
+.next-card { display: grid; grid-template-columns: minmax(300px, 1fr) minmax(300px, 1.1fr); gap: 28px;
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 28px; }
+.next-info h2 { font-size: 30px; margin: 6px 0 4px; }
+.next-time { color: var(--muted); font-size: 17px; margin-bottom: 18px; }
+.tag { font-size: 12px; font-weight: 700; letter-spacing: .08em; color: var(--accent, var(--blue)); }
+.kv { display: grid; grid-template-columns: 110px 1fr; gap: 10px 14px; margin-bottom: 22px; font-size: 15px; }
+.kv dt { color: var(--muted); }
+.map-box { background: #faf9f6; border: 1px solid var(--line); border-radius: 12px; padding: 14px; cursor: pointer; }
+.map-box .legend { margin-top: 8px; }
+
+/* seat map drawing */
+.seatmap { width: 100%; height: auto; max-height: 520px; display: block; font-family: Inter, sans-serif; }
+.seatmap .desk { fill: var(--navy); }
+.seatmap .desk-t { fill: #f5f3ee; font-size: 12px; font-weight: 600; }
+.seatmap .door { fill: #fdf1e3; stroke: var(--orange); }
+.seatmap .door-t { fill: #9a4a12; font-size: 9px; font-weight: 700; }
+.seatmap .row-t { fill: var(--muted); font-size: 12px; font-weight: 700; }
+.seatmap .seat { fill: #fff; stroke: #c9c2b4; }
+.seatmap .seat.on { fill: #cddbef; stroke: var(--blue); }
+.seatmap .seat.rep { fill: #f6d9b8; stroke: var(--orange); }
+.seatmap .seat.me { fill: var(--green); stroke: #24502f; stroke-width: 3; }
+.seatmap .seat-t { fill: var(--ink); font-size: 10px; pointer-events: none; }
+.seatmap .seat.me + .seat-t { fill: #fff; font-weight: 700; }
+.key { display: inline-block; width: 14px; height: 14px; border-radius: 4px; border: 1px solid #c9c2b4; background: #fff; vertical-align: middle; margin: 0 4px 0 10px; }
+.key.on { background: #cddbef; border-color: var(--blue); }
+.key.me { background: var(--green); border-color: #24502f; }
+
+/* weekly plan */
+.week-nav { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+.week-nav h3 { font-size: 18px; }
+.week-nav .spacer { flex: 1; }
+.week-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+.week-day { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; min-height: 160px; display: flex; flex-direction: column; gap: 8px; }
+.week-day.today { border-color: var(--blue); box-shadow: 0 0 0 2px #cddbef; }
+.wd { font-weight: 700; display: flex; justify-content: space-between; }
+.wd span { color: var(--muted); font-weight: 500; font-size: 13px; }
+.duty-chip { display: flex; flex-direction: column; gap: 2px; text-align: left; font: inherit; font-size: 13px; border: 0; cursor: pointer;
+  border-radius: 8px; padding: 8px 10px; border-left: 4px solid; }
+.duty-chip.am { background: #eef3fa; border-color: var(--blue); }
+.duty-chip.pm { background: #fdf1e3; border-color: var(--orange); }
+.duty-chip:hover { filter: brightness(.96); }
+
+/* other schedule filters */
+.filters-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-bottom: 14px; }
+.filters-row label { display: flex; flex-direction: column; gap: 4px; margin: 0; font-size: 12px; font-weight: 600; color: var(--muted); }
+.filters-row select { width: auto; min-width: 200px; }
+mark { background: #fff1b8; padding: 0 3px; border-radius: 4px; }
+
+/* hall details pop-up */
+.detail-dialog { width: min(960px, 96vw); }
+.hall-detail { display: grid; grid-template-columns: 1fr 1.1fr; gap: 24px; align-items: start; }
+ul.plain { list-style: none; display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+.staff-list .role { display: inline-block; min-width: 120px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+
+/* student page */
+.next-strip { display: flex; gap: 16px; align-items: center; background: var(--navy); color: #f5f3ee; border-radius: var(--radius); padding: 20px 24px; margin-bottom: 18px; }
+.next-strip i { font-size: 34px; color: #f0a868; }
+.next-strip .tag { color: #f0a868; }
+.next-strip p { margin-top: 4px; }
+tr.past td { color: var(--muted); }
+.seat-callout { font-size: 18px; margin: 12px 0 4px; }
+.hint { margin-top: 10px; }
+
+@media (max-width: 900px) {
+  .next-card, .hall-detail { grid-template-columns: 1fr; }
+  .week-grid { grid-template-columns: 1fr; }
+  .v-tabs button { min-width: 0; flex: 1 1 45%; }
+  .period-pick select, .inline-pick select, .filters-row select { min-width: 0; width: 100%; }
+}
