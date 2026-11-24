@@ -79,6 +79,7 @@ export async function openGenerateDialog(onSaved) {
       <div class="pills" id="g-depts">${departments.filter((d) => !d.on_hold).map((d) => `<label class="pill"><input type="checkbox" value="${d.id}" checked> ${esc(d.name.replace("Department of ", ""))}</label>`).join("")}</div>
 
       <h3 class="gen-h">Modules <span class="muted small" id="g-mod-count"></span></h3>
+      <label class="check" style="margin-bottom:10px"><input type="checkbox" id="g-cursem" checked> Only papers for each batch's <b>current semester</b> (as set in Batches)</label>
       <details class="picker"><summary>Choose modules (all are included by default)</summary>
         <div class="picker-tools"><button type="button" class="link" data-all="g-mods">Select all</button><button type="button" class="link" data-none="g-mods">Clear</button></div>
         <div class="checks" id="g-mods"></div>
@@ -122,8 +123,10 @@ export async function openGenerateDialog(onSaved) {
   let modSelection = new Set(modules.filter((m) => !m.on_hold).map((m) => m.id));
   function eligibleModules() {
     const ins = new Set(checked("g-intakes")), deps = new Set(checked("g-depts"));
+    const curSem = $("#g-cursem").checked;
     return modules.filter((m) => !m.on_hold && (batchesOf[m.id] || []).some((b) =>
-      ins.has(batchById[b]?.intake) && deps.has(batchById[b]?.department_id) && !batchById[b]?.on_hold));
+      ins.has(batchById[b]?.intake) && deps.has(batchById[b]?.department_id) && !batchById[b]?.on_hold &&
+      (!curSem || Number(m.semester) === Number(batchById[b]?.semester))));
   }
   function drawModules() {
     const list = eligibleModules();
@@ -162,7 +165,7 @@ export async function openGenerateDialog(onSaved) {
     if (e.target.closest("#g-mods")) {
       modSelection = new Set(checked("g-mods"));
     }
-    if (e.target.closest("#g-intakes, #g-depts")) drawModules();
+    if (e.target.closest("#g-intakes, #g-depts, #g-cursem")) drawModules();
     else summary();
   });
   dlg.addEventListener("click", (e) => {

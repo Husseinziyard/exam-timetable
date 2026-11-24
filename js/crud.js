@@ -11,6 +11,14 @@ import Papa from "https://cdn.jsdelivr.net/npm/papaparse@5.4.1/+esm";
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
+// Make values comparable: "Intake 43 · MTS", "43|MTS", "43 | mts" and Excel-garbled "Intake 43 Â· MTS" all become "43 mts"
+// (emails keep their dots and @ so two people never match each other)
+function norm(v) {
+  const s = String(v ?? "").trim().toLowerCase();
+  if (s.includes("@")) return s;
+  return s.replace(/[^a-z0-9@.]+/g, " ").replace(/\.(?=\s|$)/g, "").replace(/^intake\s+/, "").replace(/\s+/g, " ").trim();
+}
+
 export function toast(text, kind = "ok") {
   document.querySelectorAll(".toast").forEach((old) => old.remove());
   const t = document.createElement("div");
@@ -41,7 +49,7 @@ async function loadRef(name, force = false) {
   refCache[name] = data.map((row) => ({
     id: row.id, label: r.label(row),
     keys: [String(row.id), r.label(row), ...(r.csvKeys ? r.csvKeys(row) : [])]
-      .filter(Boolean).map((k) => String(k).trim().toLowerCase()),
+      .filter(Boolean).map(norm),
   }));
   return refCache[name];
 }
@@ -75,8 +83,8 @@ function cast(f, raw) {
 }
 
 function findRef(options, raw) {
-  const k = String(raw ?? "").trim().toLowerCase();
-  return options.find((o) => o.keys.includes(k));
+  const k = norm(raw);
+  return options.find((o) => o.keys.includes(k) || o.keys.includes(norm(`intake ${k}`)));
 }
 
 // Save the ticked items of a "multi" field into its link table
@@ -526,16 +534,24 @@ export async function renderSection(root, key) {
   }
 
   async function importCsv(file) {
-    const parsed = await new Promise((res) => Papa.parse(file, { header: true, skipEmptyLines: true, transformHeader: (h) => h.trim(), complete: res }));
-    const rows = parsed.data;
+    const parsed = await new Promise((res) => Papa.parse(file, { header: true, skipEmptyLines: false, transformHeader: (h) => h.trim(), complete: res }));
+    // ignore rows that are completely empty (Excel often leaves rows of just commas)
+    const rows = parsed.data.map((r, i) => ({ r, line: i + 2 }))
+      .filter(({ r }) => Object.values(r).some((v) => String(v ?? "").trim() !== ""));
     if (!rows.length) return toast("The file has no rows.", "error");
 
     // fresh dropdown data so new departments/batches can be matched
     clearRefCache();
     for (const f of cfg.fields.filter((f) => f.ref)) state.refs[f.ref] = await loadRef(f.ref, true);
 
-    const records = [], problems = [], multiByRow = [];
-    rows.forEach((r, i) => {
+    const records = [], problems = [], multiByRow = [], lines = [];
+    const missing = new Map();          // e.g. "batch" -> Set of values that don't exist yet
+    const noMatch = (f, value) => {
+      const kind = SECTIONS[f.ref]?.singular || "item";
+      (missing.get(kind) || missing.set(kind, new Set()).get(kind)).add(value);
+      return new Error(`no ${kind} matches “${value}”`);
+    };
+    rows.forEach(({ r, line }) => {
       try {
         const rec = {}, multi = {};
         for (const f of cfg.fields) {
@@ -546,14 +562,14 @@ export async function renderSection(root, key) {
             if (f.required && !parts.length) throw new Error(`“${col}” is empty`);
             multi[f.key] = parts.map((x) => {
               const hit = findRef(state.refs[f.ref], x);
-              if (!hit) throw new Error(`no ${SECTIONS[f.ref]?.singular || "item"} matches “${x}”`);
+              if (!hit) throw noMatch(f, x);
               return hit.id;
             });
           } else if (f.type === "fk") {
             const raw = String(r[col] ?? "").trim();
             if (!raw) { if (f.required) throw new Error(`“${col}” is empty`); rec[f.key] = null; continue; }
             const hit = findRef(state.refs[f.ref], raw);
-            if (!hit) throw new Error(`no ${SECTIONS[f.ref]?.singular || "item"} matches “${raw}”`);
+            if (!hit) throw noMatch(f, raw);
             rec[f.key] = hit.id;
           } else {
             const v = cast(f, r[col]);
@@ -567,11 +583,31 @@ export async function renderSection(root, key) {
         if (cfg.hold && "on_hold" in r) rec.on_hold = cast({ type: "checkbox" }, r.on_hold);
         records.push(rec);
         multiByRow.push(multi);
-      } catch (err) { problems.push(`Row ${i + 2}: ${err.message}`); }
+        lines.push(line);
+      } catch (err) { problems.push(`Row ${line}: ${err.message}`); }
     });
 
+    // the same code/name/email twice in one file would overwrite itself
+    const keyCols = cfg.conflict.split(",");
+    const seen = new Map();             // key -> row numbers
+    records.forEach((rec, i) => {
+      const k = keyCols.map((c) => String(rec[c] ?? "").trim().toLowerCase()).join("|");
+      (seen.get(k) || seen.set(k, { label: keyCols.map((c) => rec[c]).join(" "), rows: [] }).get(k)).rows.push(lines[i]);
+    });
+    const dupes = [...seen.values()].filter((d) => d.rows.length > 1);
+    dupes.forEach((d) => d.rows.slice(1).forEach((row) =>
+      problems.push(`Row ${row}: same ${keyCols.join(" + ").replace(/_id/g, "")} as row ${d.rows[0]} (“${d.label}”)`)));
+
     if (problems.length) {
-      alert(`Nothing was imported. Please fix these rows and try again:\n\n${problems.slice(0, 15).join("\n")}${problems.length > 15 ? `\n…and ${problems.length - 15} more` : ""}`);
+      const summary = [...missing].map(([kind, vals]) =>
+        `• These ${kind === "batch" ? "batches" : kind + "s"} don't exist yet — add them first: ${[...vals].join(", ")}`);
+      if (dupes.length) summary.push(`• ${dupes.length} ${keyCols.join(" + ").replace(/_id/g, "")}${dupes.length > 1 ? "s are" : " is"} used on more than one row ` +
+        `(e.g. “${dupes[0].label}” on rows ${dupes[0].rows.slice(0, 6).join(", ")}). Each row needs its own — otherwise the rows overwrite each other.`);
+      const empty = problems.filter((x) => /is empty$/.test(x));
+      if (empty.length) summary.push(`• ${empty.length} row${empty.length > 1 ? "s have" : " has"} a required column left empty (first: ${empty[0].split(":")[0]}).`);
+      alert(`Nothing was imported. ${problems.length} row${problems.length > 1 ? "s need" : " needs"} fixing.\n\n` +
+        (summary.length ? summary.join("\n") + "\n\n" : "") +
+        `${problems.slice(0, 12).join("\n")}${problems.length > 12 ? `\n…and ${problems.length - 12} more` : ""}`);
       return;
     }
     // upsert = add new rows, update existing ones (matched by name/code/email)
