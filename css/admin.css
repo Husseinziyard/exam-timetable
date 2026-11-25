@@ -543,3 +543,17 @@ details.sc-group .sc-row:last-of-type { border-bottom: 0; }
 .slot-card.bad .slot-note { color: var(--red); }
 .slot-card:has(input:checked):not(.cur) { border-color: var(--navy); box-shadow: 0 0 0 2px var(--navy); background: #f4f7fb; }
 .slot-card:hover:not(.bad):not(.cur) { border-color: var(--blue); }
+
+/* ----- Published / draft-copy banner on a timetable ----- */
+.version-bar { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: center; padding: 14px 18px; margin: 0 0 16px;
+  border-radius: var(--radius); border: 1px solid var(--line); font-size: 14px; }
+.version-bar > i { font-size: 24px; }
+.version-bar .vb-text { flex: 1 1 320px; line-height: 1.5; }
+.version-bar .vb-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.version-bar.live { background: #eaf5ee; border-color: #9fd0b1; }
+.version-bar.live > i { color: var(--green); }
+.version-bar.copy { background: #fff4e6; border-color: #f0a868; }
+.version-bar.copy > i { color: #b45309; }
+.btn.danger { color: var(--red); }
+.btn.light.danger:hover { border-color: var(--red); }
+.ai-ro { background: #eef3fa; border-radius: 10px; padding: 10px 12px; font-size: 13px; margin-bottom: 12px; display: flex; gap: 8px; }

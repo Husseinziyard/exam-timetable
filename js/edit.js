@@ -8,6 +8,7 @@
 // Every change is saved straight away; the health check then re-runs.
 // =====================================================================
 import { supabase } from "./config.js";
+import { republish } from "./versions.js";
 import { toast } from "./crud.js";
 import { generate, workingDays, allocate, GRADE_WEIGHT, timeLabel, unavailable } from "./engine.js";
 import { buildInput, saveTimetable, loadAll } from "./generate.js";
@@ -91,8 +92,11 @@ export function mountEditor({ panel, T, periodId, reload, onSelect }) {
           ${T.exams.some((e) => e.locked) || T.halls.some((h) => h.duties.some((d) => d.locked)) ? `<button class="link" data-act="unlock-all">Unlock everything</button>` : ""}
         </div>
         <div class="ep-block">
-          <p class="ep-label">${T.period.status === "published" ? "Published" : "Publish"}</p>
-          ${T.period.status === "published"
+          <p class="ep-label">${T.period.status === "published" ? "Published" : T.period.options?.replaces ? "Republish" : "Publish"}</p>
+          ${T.period.options?.replaces && T.period.status !== "published"
+            ? `<p class="small muted">Seats are given again, then this copy <b>replaces the published version</b> for lecturers and students. The old version is removed.</p>
+               <button class="btn full" data-act="publish"><i class="ti ti-send"></i> Allocate seats &amp; republish</button>`
+          : T.period.status === "published"
             ? `<p class="small muted">Lecturers and students can see this timetable. Changes you make now are visible to them straight away.</p>
                <button class="btn light full" data-act="seats"><i class="ti ti-armchair"></i> Re-allocate seats</button>
                <button class="btn light full" data-act="unpublish"><i class="ti ti-eye-off"></i> Unpublish</button>`
@@ -307,12 +311,15 @@ export function mountEditor({ panel, T, periodId, reload, onSelect }) {
     });
     if (act === "publish" || act === "seats") {
       const errs = T.checks.filter((c) => c.level === "error").length;
+      const again = act === "publish" && T.period.options?.replaces;
       if (act === "publish" && errs && !confirm(`The health check still shows ${errs} problem${errs > 1 ? "s" : ""}. Publish anyway?`)) return;
-      return run(act === "publish" ? "Published — lecturers and students can now see it." : "Seats re-allocated.", async () => {
+      if (again && !confirm("Republish? This version replaces the published one for lecturers and students, and the old version is removed.")) return;
+      return run(again ? "Republished — lecturers and students now see the new version." : act === "publish" ? "Published — lecturers and students can now see it." : "Seats re-allocated.", async () => {
         const r = await allocateSeats();
         if (r.none) toast("No students in the system yet, so no seat numbers were given. Halls and times are still published.");
         else if (r.short) toast(`${r.short} students could not get a seat — check hall capacities.`, "error");
-        if (act === "publish") await q(supabase.from("exam_periods").update({ status: "published" }).eq("id", periodId));
+        if (again) { await republish(T.period); T.period.status = "published"; delete T.period.options.replaces; }
+        else if (act === "publish") await q(supabase.from("exam_periods").update({ status: "published" }).eq("id", periodId));
       });
     }
     if (act === "unpublish") {

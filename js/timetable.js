@@ -12,6 +12,7 @@ import { mountScale } from "./scale.js";
 import { availabilityMap, preferenceMap } from "./generate.js";
 import { DEFAULT_WEEKLY_LIMITS } from "./engine.js";
 import { workingDays } from "./engine.js";
+import { findDraftCopy, copyPeriod, deletePeriod, confirmDelete } from "./versions.js";
 
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -55,23 +56,28 @@ export async function renderOverview(root, go) {
   box.innerHTML = periods.length ? `
     <div class="table-wrap"><table class="data">
       <thead><tr><th>Name</th><th>Exam days</th><th>Status</th><th>Created</th><th class="actions-col"></th></tr></thead>
-      <tbody>${periods.map((p) => `
+      <tbody>${periods.map((p) => {
+        const isCopy = p.status === "draft" && p.options?.replaces;
+        const hasCopy = p.status === "published" && periods.some((x) => x.status === "draft" && Number(x.options?.replaces) === p.id);
+        return `
         <tr data-id="${p.id}" tabindex="0" title="Open this timetable">
           <td><b>${esc(p.name)}</b></td>
           <td>${fmtDate(p.start_date)} – ${fmtDate(p.end_date, { day: "2-digit", month: "short", year: "numeric" })}</td>
-          <td>${p.status === "published" ? '<span class="badge active">Published</span>' : '<span class="badge draft">Draft</span>'}</td>
+          <td>${p.status === "published" ? '<span class="badge active">Published</span>' : '<span class="badge draft">Draft</span>'}
+            ${isCopy ? '<span class="small muted">· changes to the published version</span>' : ""}
+            ${hasCopy ? '<span class="small muted">· changes in progress</span>' : ""}</td>
           <td class="muted">${new Date(p.created_at).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}</td>
-          <td class="actions"><button class="link" data-open>Open</button>${p.status === "draft" ? '<button class="link danger" data-del>Delete</button>' : ""}</td>
-        </tr>`).join("")}</tbody></table></div>`
+          <td class="actions"><button class="link" data-open>Open</button><button class="link danger" data-del>Delete</button></td>
+        </tr>`; }).join("")}</tbody></table></div>`
     : `<div class="empty table-wrap"><p><strong>No timetables yet.</strong></p><p class="muted">Click “Generate timetable” to make the first one.</p></div>`;
   box.addEventListener("click", async (e) => {
     const tr = e.target.closest("tr[data-id]");
     if (!tr) return;
     if (e.target.closest("[data-del]")) {
-      if (!confirm("Delete this draft timetable? This cannot be undone.")) return;
-      const { error } = await supabase.from("exam_periods").delete().eq("id", tr.dataset.id);
-      if (error) return toast(error.message, "error");
-      toast("Draft deleted.");
+      const per = periods.find((x) => x.id === Number(tr.dataset.id));
+      if (!confirmDelete(per)) return;
+      try { await deletePeriod(per.id); } catch (err) { return toast(err.message, "error"); }
+      toast(per.status === "published" ? "Published timetable deleted." : "Draft deleted.");
       return renderOverview(root, go);
     }
     go(`timetable/${tr.dataset.id}`);
@@ -197,6 +203,12 @@ export async function renderTimetable(root, periodId, go, view = "streams", ui =
   });
   const n = (lvl) => checks.filter((c) => c.level === lvl).length;
   const p = T.period;
+  const live = p.status === "published";
+  if (live) ui.edit = false;                       // the live version is never edited directly
+  if (sessionStorage.getItem("openEdit") === String(periodId)) { sessionStorage.removeItem("openEdit"); ui.edit = true; }
+  const pendingCopy = live ? await findDraftCopy(p.id).catch(() => null) : null;
+  const original = !live && p.options?.replaces
+    ? (await supabase.from("exam_periods").select("id,name,status").eq("id", p.options.replaces).maybeSingle()).data : null;
   const staffName = (id) => T.staffLite.find((s) => s.id === id)?.name ?? "?";
   const mod = (id) => T.moduleById[id] || { code: "?", name: "?" };
   const streamsOf = (moduleId) => (T.batchesOf[moduleId] || []).map((b) => T.batchById[b]).filter(Boolean);
@@ -213,12 +225,33 @@ export async function renderTimetable(root, periodId, go, view = "streams", ui =
       </div>
       <div class="tt-actions">
         <button class="btn light" id="print"><i class="ti ti-printer"></i> Print</button>
-        <button class="btn light toggle ${ui.edit ? "on" : ""}" id="edit-toggle" aria-pressed="${!!ui.edit}"><i class="ti ti-pencil"></i> Edit</button>
+        ${live ? `<button class="btn light" id="edit-copy"><i class="ti ti-pencil"></i> ${pendingCopy ? "Continue editing" : "Edit"}</button>`
+          : `<button class="btn light toggle ${ui.edit ? "on" : ""}" id="edit-toggle" aria-pressed="${!!ui.edit}"><i class="ti ti-pencil"></i> Edit</button>`}
         <button class="btn light toggle ${right === "scale" ? "on" : ""}" id="scale-toggle" aria-pressed="${right === "scale"}"><i class="ti ti-chart-bar"></i> Load scale</button>
         <button class="btn light toggle ${right === "ai" ? "on" : ""}" id="ai-toggle" aria-pressed="${right === "ai"}"><i class="ti ti-sparkles"></i> AI assistant</button>
-        <button class="btn" id="publish">${p.status === "published" ? '<i class="ti ti-eye"></i> Published' : '<i class="ti ti-send"></i> Publish…'}</button>
+        ${live ? "" : `<button class="btn" id="publish"><i class="ti ti-send"></i> ${original ? "Republish…" : "Publish…"}</button>`}
       </div>
     </div>
+
+    ${live ? `<div class="version-bar live">
+        <i class="ti ti-broadcast"></i>
+        <div class="vb-text"><b>This is the published version.</b> Lecturers and students can see it.
+          ${pendingCopy ? "You have a draft copy with changes that are not published yet." : "To change it, click <b>Edit</b>: you work on a copy, and everyone keeps seeing this version until you republish."}</div>
+        <div class="vb-actions">
+          <button class="btn small" data-vb="copy"><i class="ti ti-pencil"></i> ${pendingCopy ? "Open the draft copy" : "Edit a copy"}</button>
+          <button class="btn light small" data-vb="unpublish"><i class="ti ti-eye-off"></i> Unpublish</button>
+          <button class="btn light small danger" data-vb="delete"><i class="ti ti-trash"></i> Delete</button>
+        </div>
+      </div>` : original ? `<div class="version-bar copy">
+        <i class="ti ti-copy"></i>
+        <div class="vb-text"><b>Draft copy of a published timetable.</b> Lecturers and students still see the ${original.status === "published" ? "published" : "old"} version.
+          Make your changes, then click <b>Republish</b> to replace it.</div>
+        <div class="vb-actions">
+          <button class="btn small" data-vb="republish"><i class="ti ti-send"></i> Republish…</button>
+          <a class="btn light small" href="#timetable/${original.id}"><i class="ti ti-eye"></i> See the published version</a>
+          <button class="btn light small danger" data-vb="discard"><i class="ti ti-trash"></i> Discard this copy</button>
+        </div>
+      </div>` : ""}
 
     <details class="health ${n("error") ? "bad" : n("warn") ? "meh" : "good"}" ${n("error") ? "open" : ""}>
       <summary>
@@ -269,12 +302,42 @@ export async function renderTimetable(root, periodId, go, view = "streams", ui =
 
   root.querySelector("#print").addEventListener("click", () => window.print());
   const rerender = (extra = {}) => renderTimetable(root, periodId, go, view, { ...ui, keep: true, ...extra });
-  root.querySelector("#edit-toggle").addEventListener("click", () => rerender({ edit: !ui.edit, sel: null }));
+  root.querySelector("#edit-toggle")?.addEventListener("click", () => rerender({ edit: !ui.edit, sel: null }));
+  // published: edit through a draft copy
+  async function editCopy(btn) {
+    if (pendingCopy) return go(`timetable/${pendingCopy.id}`);
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader-2 spin"></i> Making a copy…'; }
+    try {
+      const id = await copyPeriod(p.id);
+      toast("Draft copy made. Change what you need, then click Republish. Everyone still sees the published version.");
+      sessionStorage.setItem("openEdit", String(id));
+      go(`timetable/${id}`);
+    } catch (err) { toast(err.message || String(err), "error"); if (btn) btn.disabled = false; }
+  }
+  root.querySelector("#edit-copy")?.addEventListener("click", (e) => editCopy(e.currentTarget));
+  root.querySelectorAll("[data-vb]").forEach((b) => b.addEventListener("click", async () => {
+    const a = b.dataset.vb;
+    if (a === "copy") return editCopy(b);
+    if (a === "republish") return rerender({ edit: true, sel: null });
+    if (a === "unpublish") {
+      if (!confirm("Unpublish? Lecturers and students will no longer see this timetable. It becomes a draft you can edit and publish again.")) return;
+      const { error } = await supabase.from("exam_periods").update({ status: "draft" }).eq("id", p.id);
+      if (error) return toast(error.message, "error");
+      toast("Unpublished — it's a draft again.");
+      return rerender({});
+    }
+    if (a === "delete" || a === "discard") {
+      if (a === "discard" ? !confirm("Discard this draft copy? Your changes in it are lost. The published version stays as it is.") : !confirmDelete(p)) return;
+      try { await deletePeriod(p.id); } catch (err) { return toast(err.message, "error"); }
+      toast(a === "discard" ? "Draft copy discarded." : "Published timetable deleted.");
+      return go(a === "discard" && original ? `timetable/${original.id}` : "overview");
+    }
+  }));
   root.querySelector("#ai-toggle").addEventListener("click", () => rerender({ right: right === "ai" ? null : "ai" }));
   root.querySelector("#scale-toggle").addEventListener("click", () => rerender({ right: right === "scale" ? null : "scale" }));
   root.querySelectorAll("[data-right]").forEach((b) => b.addEventListener("click", () => rerender({ right: b.dataset.right || null })));
   root.querySelector("[data-close-edit]").addEventListener("click", () => rerender({ edit: false, sel: null }));
-  root.querySelector("#publish").addEventListener("click", () => rerender({ edit: true, sel: null }));
+  root.querySelector("#publish")?.addEventListener("click", () => rerender({ edit: true, sel: null }));
 
   // the Edit panel (its tools are also used by the AI assistant)
   const editorObj = mountEditor({

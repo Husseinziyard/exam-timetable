@@ -106,6 +106,7 @@ function check(T, a) {
 export function mountAI({ panel, T, periodId, editor, refresh }) {
   const chat = chats.get(periodId) || chats.set(periodId, { messages: [], queue: [] }).get(periodId);
   let busy = false;
+  const ro = T.period.status === "published";     // the live version is changed through a draft copy
 
   function draw() {
     const msgs = chat.messages.map((m, mi) => {
@@ -121,13 +122,15 @@ export function mountAI({ panel, T, periodId, editor, refresh }) {
             ${c.reason ? `<span class="why">${esc(c.reason)}</span>` : ""}
             ${m.done?.[i] ? `<span class="tag-ok"><i class="ti ti-check"></i> Applied</span>`
               : c.blocked ? `<span class="tag-bad"><i class="ti ti-ban"></i> Can't apply: ${esc(c.blocked)}</span>`
+              : ro ? `<span class="tag-warn">Click Edit first to apply changes</span>`
               : `${c.warn ? `<span class="tag-warn">Note: ${esc(c.warn)}</span>` : ""}<button class="btn small" data-apply="${mi}:${i}">Apply</button>`}
           </li>`).join("")}</ol>
-          ${open.length > 1 ? `<button class="btn light small full" data-apply-all="${mi}">Apply all ${open.length} that pass the checks</button>` : ""}` : ""}
+          ${open.length > 1 && !ro ? `<button class="btn light small full" data-apply-all="${mi}">Apply all ${open.length} that pass the checks</button>` : ""}` : ""}
         ${m.model ? `<p class="ai-model">${esc(m.model)}</p>` : ""}
       </div>`;
     }).join("");
     panel.innerHTML = `
+      ${ro ? '<p class="ai-ro"><i class="ti ti-info-circle"></i> This is the published version. You can ask questions here; to apply changes, click <b>Edit</b> to work on a copy.</p>' : ""}
       ${chat.messages.length ? '<div class="ai-top"><button class="link" data-clear><i class="ti ti-plus"></i> New chat</button></div>' : ""}
       ${chat.messages.length ? "" : `<p class="small">Ask in plain words. The assistant suggests changes; each one is checked against the faculty's rules, and nothing changes until you click <b>Apply</b>.</p>
         <div class="ai-examples">${[
