@@ -4,7 +4,7 @@
 // students until it is published).
 // =====================================================================
 import { supabase } from "./config.js";
-import { generate, workingDays } from "./engine.js";
+import { generate, workingDays, DEFAULT_WEEKLY_LIMITS } from "./engine.js";
 import { toast } from "./crud.js";
 
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) =>
@@ -20,7 +20,7 @@ async function q(promise) {
 
 // Everything the engine needs, straight from the database
 export async function loadAll() {
-  const [departments, batches, modules, links, rooms, staff, leave, holidays, settings] = await Promise.all([
+  const [departments, batches, modules, links, rooms, staff, leave, holidays, settings, availability, responses] = await Promise.all([
     q(supabase.from("departments").select("*").order("name")),
     q(supabase.from("batches").select("*").order("intake")),
     q(supabase.from("modules").select("*").order("code")),
@@ -30,11 +30,14 @@ export async function loadAll() {
     q(supabase.from("lecturer_leave").select("*")),
     q(supabase.from("holidays").select("*")),
     q(supabase.from("settings").select("*")),
+    q(supabase.from("availability").select("lecturer_id,unavailable_date,session")),
+    q(supabase.from("availability_responses").select("lecturer_id,preference,submitted_at")),
   ]);
   const batchesOf = {};
   links.forEach((l) => (batchesOf[l.module_id] ||= []).push(l.batch_id));
   const setting = Object.fromEntries(settings.map((s) => [s.key, s.value]));
-  return { departments, batches, modules, batchesOf, rooms, staff, leave, holidays, setting };
+  const limits = { ...DEFAULT_WEEKLY_LIMITS, ...(setting.weekly_limits || {}) };
+  return { departments, batches, modules, batchesOf, rooms, staff, leave, holidays, setting, availability, responses, limits };
 }
 
 // Students sitting a paper = proper students of its streams (or the override) + repeat students
@@ -49,7 +52,7 @@ export function studentsFor(m, batchesOf, batchById) {
 export async function openGenerateDialog(onSaved) {
   let data;
   try { data = await loadAll(); } catch (err) { return toast(err.message, "error"); }
-  const { departments, batches, modules, batchesOf, rooms, staff, leave, holidays, setting } = data;
+  const { departments, batches, modules, batchesOf, rooms, staff, leave, holidays, setting, availability, responses, limits } = data;
   const batchById = Object.fromEntries(batches.map((b) => [b.id, b]));
   const activeBatches = batches.filter((b) => !b.on_hold);
   const intakes = [...new Set(activeBatches.map((b) => b.intake))].sort((a, b) => b - a);
@@ -103,6 +106,10 @@ export async function openGenerateDialog(onSaved) {
         <div><label for="g-thr">Second invigilator when a hall has more than</label><input id="g-thr" type="number" min="1" value="${Number(setting.second_invigilator_above ?? 60)}"></div>
         <div><label for="g-gap">Study days between a stream's exams (at least)</label><input id="g-gap" type="number" min="0" max="5" value="1"></div>
       </div>
+      <p class="gen-sub">Most exam sessions per week (out of 10) — the timetable tries to stay under these and warns if it can't</p>
+      <div class="limits">${[["PROF", "Professor"], ["SL1", "SL Gr. I"], ["SL2", "SL Gr. II"], ["LECT", "Lecturer"], ["INSTR", "Others"]].map(([k, l]) =>
+        `<label>${l}<input type="number" min="0" max="10" data-limit="${k}" value="${limits[k]}"></label>`).join("")}</div>
+      <p class="small muted">${responses.length ? `${new Set(responses.map((r) => r.lecturer_id)).size} staff have told us when they can't come — those sessions are avoided.` : "No availability answers yet (see Availability in the menu)."}</p>
 
       <div class="gen-summary" id="g-summary"></div>
       <p class="msg error form-msg"></p>
@@ -204,8 +211,17 @@ export async function openGenerateDialog(onSaved) {
     };
     if (!opts.days.length) return show("There are no working days in that period.");
 
+    // weekly limits: "Others" covers instructors, military invigilators and hall attendants
+    const lim = Object.fromEntries([...dlg.querySelectorAll("[data-limit]")].map((i) => [i.dataset.limit, Number(i.value)]));
+    const newLimits = { ...lim, MIL: lim.INSTR, HA: lim.INSTR };
+    try {      // remember the limits for next time (a failure here must not stop the timetable)
+      const { error } = await supabase.from("settings").upsert(
+        { key: "weekly_limits", value: newLimits, note: "Most exam sessions per week (out of 10) for each grade" }, { onConflict: "key" });
+      if (error) throw error;
+    } catch (err) { toast(`Weekly limits were used but not saved for next time: ${err.message || err}`, "error"); }
+
     const input = buildInput({ mods, batchesOf, batchById, departments, rooms: rooms.filter((r) => roomIds.has(r.id)),
-      staff: staff.filter((x) => staffIds.has(x.id)), leave, opts });
+      staff: staff.filter((x) => staffIds.has(x.id)), leave, opts, availability, responses, limits: newLimits });
 
     const btn = $("#g-go");
     btn.disabled = true; btn.textContent = "Generating…";
@@ -228,7 +244,8 @@ export async function openGenerateDialog(onSaved) {
 }
 
 // Turn database rows into the engine's input
-export function buildInput({ mods, batchesOf, batchById, departments, rooms, staff, leave, opts, locked = [] }) {
+export function buildInput({ mods, batchesOf, batchById, departments, rooms, staff, leave, opts, locked = [],
+  availability = [], responses = [], limits = DEFAULT_WEEKLY_LIMITS }) {
   const deptById = Object.fromEntries(departments.map((d) => [d.id, d]));
   const batches = {};
   for (const m of mods) for (const b of batchesOf[m.id] || []) {
@@ -254,14 +271,31 @@ export function buildInput({ mods, batchesOf, batchById, departments, rooms, sta
   }
   const leaveBy = {};
   leave.forEach((l) => (leaveBy[l.lecturer_id] ||= []).push([l.start_date, l.end_date]));
+  const unavailBy = availabilityMap(availability);
+  const prefBy = preferenceMap(responses);
   return {
     units, batches, opts,
     rooms: rooms.map((r) => ({ id: r.id, name: r.name, cap: r.exam_capacity })),
     staff: staff.filter((s) => !s.on_hold).map((s) => ({
       id: s.id, name: `${s.title ? s.title + " " : ""}${s.full_name}`, grade: s.grade,
       canSup: !!s.can_supervise, canInv: !!s.can_invigilate, isHA: s.grade === "HA", leave: leaveBy[s.id] || [],
+      unavail: unavailBy[s.id] || {}, pref: prefBy[s.id] || null, cap: limits[s.grade] ?? null,
     })),
   };
+}
+
+// "Can't come" answers -> { lecturerId: { "2026-11-18|ALL": true, "2026-11-19|AM": true } }
+export function availabilityMap(rows) {
+  const m = {};
+  rows.forEach((a) => { (m[a.lecturer_id] ||= {})[`${a.unavailable_date}|${a.session}`] = true; });
+  return m;
+}
+// Latest preference per lecturer: "AM", "PM" or null
+export function preferenceMap(rows) {
+  const m = {};
+  [...rows].sort((a, b) => String(a.submitted_at).localeCompare(String(b.submitted_at)))
+    .forEach((r) => { m[r.lecturer_id] = r.preference === "any" ? null : r.preference; });
+  return m;
 }
 
 // Save: period -> exams -> hall sessions -> which papers in which hall -> duties

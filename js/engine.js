@@ -12,6 +12,19 @@ export const SESSION_START = { AM: 9, PM: 13 };
 // How "heavy" one duty is per grade: higher = gets fewer duties
 export const GRADE_WEIGHT = { PROF: 3, SL1: 2, SL2: 1.5, LECT: 1, INSTR: 1, MIL: 1, HA: 1 };
 
+// Most exam sessions per week (out of 10) for each grade — the admin can change these
+export const DEFAULT_WEEKLY_LIMITS = { PROF: 2, SL1: 2, SL2: 5, LECT: 7, INSTR: 8, MIL: 8, HA: 8 };
+
+// The Monday of the week a date falls in (used to count sessions per week)
+export function weekOf(date) {
+  const d = new Date(date + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  return d.toISOString().slice(0, 10);
+}
+// Did this person say they can't come to this session?
+export const unavailable = (s, date, session) =>
+  !!(s.unavail && (s.unavail[`${date}|${session}`] || s.unavail[`${date}|ALL`]));
+
 // ---------- small helpers ----------
 export function seededRandom(seed = 1) {               // same seed -> same timetable
   let a = seed >>> 0;
@@ -255,6 +268,7 @@ export function assignStaff(halls, staff, opts, locked = []) {
   const load = new Map(staff.map((s) => [s.id, 0]));
   const busy = new Map();            // "date|session" -> Set(staff ids)
   const daily = new Map();           // "date|id" -> count
+  const weekly = new Map();          // "monday|id" -> sessions that week
   const onLeave = (s, date) => (s.leave || []).some(([a, b]) => date >= a && date <= b);
   const sorted = [...halls].sort((a, b) =>
     a.date.localeCompare(b.date) || a.session.localeCompare(b.session) || b.students - a.students);
@@ -273,14 +287,21 @@ export function assignStaff(halls, staff, opts, locked = []) {
     const s = staff.find((x) => x.id === id);
     load.set(id, (load.get(id) || 0) + (GRADE_WEIGHT[s?.grade] || 1));
     daily.set(`${h.date}|${id}`, (daily.get(`${h.date}|${id}`) || 0) + 1);
+    const wk = `${weekOf(h.date)}|${id}`;
+    weekly.set(wk, (weekly.get(wk) || 0) + 1);
   }
   function pick(h, ok) {
     const slot = `${h.date}|${h.session}`;
     const taken = busy.get(slot) || new Set();
     let best = null, bc = Infinity;
     for (const s of staff) {
-      if (!ok(s) || taken.has(s.id) || onLeave(s, h.date)) continue;
-      const c = load.get(s.id) + (daily.get(`${h.date}|${s.id}`) || 0) * 3 + rand() * 0.3;
+      if (!ok(s) || taken.has(s.id) || onLeave(s, h.date) || unavailable(s, h.date, h.session)) continue;
+      const thisWeek = weekly.get(`${weekOf(h.date)}|${s.id}`) || 0;
+      const overCap = s.cap != null && thisWeek >= s.cap;           // weekly limit reached: only if nobody else is free
+      const c = load.get(s.id) + (daily.get(`${h.date}|${s.id}`) || 0) * 3
+        + (overCap ? 100 : 0)
+        + (s.pref && s.pref !== h.session ? 1.5 : 0)                 // prefers the other session
+        + rand() * 0.3;
       if (c < bc) { bc = c; best = s; }
     }
     return best;
@@ -377,6 +398,7 @@ export function validate(t) {
       if (slotStaff.has(k)) add("error", `${s?.name || "Someone"} is in two halls at once on ${h.date} ${h.session}.`, h.id);
       slotStaff.set(k, h);
       if (s && (s.leave || []).some(([a, b]) => h.date >= a && h.date <= b)) add("error", `${s.name} is on leave on ${h.date} but has a duty.`, h.id);
+      if (s && unavailable(s, h.date, h.session)) add("error", `${s.name} said they can't come on ${h.date} ${h.session} but has a duty.`, h.id);
       if (s?.onHold) add("warn", `${s.name} is on hold but has a duty on ${h.date}.`, h.id);
       if (s && d.role === "SUPERVISOR" && !s.canSup) add("warn", `${s.name} supervises on ${h.date} but is not marked “can supervise”.`, h.id);
     }
@@ -386,8 +408,16 @@ export function validate(t) {
     const got = seated[e.id] || 0;
     if (got < need) add("error", `${t.moduleCode?.[e.moduleId] || "A paper"} on ${e.date}: ${need - got} students without a seat.`, e.id);
   }
-  // fairness: grade order (Professors fewest … Lecturers most)
-  const counts = {};
-  for (const h of t.halls) for (const d of h.duties) counts[d.staffId] = (counts[d.staffId] || 0) + 1;
+  // weekly limits (out of 10 sessions a week)
+  const perWeek = new Map();
+  for (const h of t.halls) for (const d of h.duties) {
+    const k = `${weekOf(h.date)}|${d.staffId}`;
+    perWeek.set(k, (perWeek.get(k) || 0) + 1);
+  }
+  for (const [k, n] of perWeek) {
+    const [wk, id] = k.split("|");
+    const s = staffById[id];
+    if (s && s.cap != null && n > s.cap) add("warn", `${s.name} has ${n} sessions in the week of ${wk} (limit ${s.cap}).`);
+  }
   return out.sort((a, b) => ["error", "warn", "info"].indexOf(a.level) - ["error", "warn", "info"].indexOf(b.level));
 }

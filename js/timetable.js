@@ -8,6 +8,9 @@ import { validate, timeLabel, SESSION_START } from "./engine.js";
 import { openGenerateDialog, studentsFor } from "./generate.js";
 import { mountEditor } from "./edit.js";
 import { mountAI } from "./ai.js";
+import { mountScale } from "./scale.js";
+import { availabilityMap, preferenceMap } from "./generate.js";
+import { DEFAULT_WEEKLY_LIMITS } from "./engine.js";
 import { workingDays } from "./engine.js";
 
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) =>
@@ -96,7 +99,7 @@ export async function renderOverview(root, go) {
 // =====================================================================
 export async function loadTimetable(periodId) {
   const period = await q(supabase.from("exam_periods").select("*").eq("id", periodId).single());
-  const [exams, halls, modules, links, batches, rooms, staff, leave, settings] = await Promise.all([
+  const [exams, halls, modules, links, batches, rooms, staff, leave, settings, availability, responses] = await Promise.all([
     q(supabase.from("exams").select("*").eq("period_id", periodId)),
     q(supabase.from("hall_sessions").select("*").eq("period_id", periodId)),
     q(supabase.from("modules").select("*")),
@@ -106,7 +109,11 @@ export async function loadTimetable(periodId) {
     q(supabase.from("lecturers").select("*")),
     q(supabase.from("lecturer_leave").select("*")),
     q(supabase.from("settings").select("*")),
+    q(supabase.from("availability").select("lecturer_id,unavailable_date,session").gte("unavailable_date", period.start_date).lte("unavailable_date", period.end_date)),
+    q(supabase.from("availability_responses").select("lecturer_id,preference,submitted_at")),
   ]);
+  const limits = { ...DEFAULT_WEEKLY_LIMITS, ...(settings.find((s) => s.key === "weekly_limits")?.value || {}) };
+  const unavailBy = availabilityMap(availability), prefBy = preferenceMap(responses);
   const hallIds = halls.map((h) => h.id);
   const [examHalls, duties] = hallIds.length ? await Promise.all([
     q(supabase.from("exam_halls").select("*").in("hall_session_id", hallIds)),
@@ -135,12 +142,13 @@ export async function loadTimetable(periodId) {
   const staffLite = staff.map((s) => ({
     id: s.id, name: `${s.title ? s.title + " " : ""}${s.full_name}`, grade: s.grade,
     canSup: s.can_supervise, onHold: s.on_hold, leave: leaveBy[s.id] || [],
+    unavail: unavailBy[s.id] || {}, pref: prefBy[s.id] || null, cap: limits[s.grade] ?? null,
   }));
   const batchLite = Object.fromEntries(batches.map((b) => [b.id, {
     label: `Intake ${b.intake} · ${b.stream || b.degree}`, onePerDay: false,
   }]));
   return {
-    period, exams: examList, halls: hallList, moduleById, batchById, roomById, staffById, batchesOf, examById, threshold,
+    period, exams: examList, halls: hallList, limits, moduleById, batchById, roomById, staffById, batchesOf, examById, threshold,
     staffLite, batchLite,
     moduleStudents: Object.fromEntries(exams.map((e) => [e.module_id, studentsFor(moduleById[e.module_id] || {}, batchesOf, batchById)])),
   };
@@ -150,6 +158,7 @@ export async function loadTimetable(periodId) {
 // THE TIMETABLE PAGE
 // =====================================================================
 export async function renderTimetable(root, periodId, go, view = "streams", ui = {}) {
+  const right = ui.right === undefined ? "scale" : ui.right;     // the Load scale is open by default
   const scrollY = root.scrollTop;
   if (!ui.keep) root.innerHTML = `<p class="loading">Loading timetable…</p>`;
   let T;
@@ -187,7 +196,8 @@ export async function renderTimetable(root, periodId, go, view = "streams", ui =
       <div class="tt-actions">
         <button class="btn light" id="print"><i class="ti ti-printer"></i> Print</button>
         <button class="btn light toggle ${ui.edit ? "on" : ""}" id="edit-toggle" aria-pressed="${!!ui.edit}"><i class="ti ti-pencil"></i> Edit</button>
-        <button class="btn light toggle ${ui.ai ? "on" : ""}" id="ai-toggle" aria-pressed="${!!ui.ai}"><i class="ti ti-sparkles"></i> AI assistant</button>
+        <button class="btn light toggle ${right === "scale" ? "on" : ""}" id="scale-toggle" aria-pressed="${right === "scale"}"><i class="ti ti-chart-bar"></i> Load scale</button>
+        <button class="btn light toggle ${right === "ai" ? "on" : ""}" id="ai-toggle" aria-pressed="${right === "ai"}"><i class="ti ti-sparkles"></i> AI assistant</button>
         <button class="btn" id="publish">${p.status === "published" ? '<i class="ti ti-eye"></i> Published' : '<i class="ti ti-send"></i> Publish…'}</button>
       </div>
     </div>
@@ -203,7 +213,7 @@ export async function renderTimetable(root, periodId, go, view = "streams", ui =
       <ul class="health-list">${checks.map((c) => `<li class="${c.level}">${esc(c.text)}</li>`).join("") || "<li class='info'>No issues found.</li>"}</ul>
     </details>
 
-    <div class="tt-layout ${ui.edit ? "with-edit" : ""} ${ui.ai ? "with-ai" : ""}">
+    <div class="tt-layout ${ui.edit ? "with-edit" : ""} ${right ? "with-ai" : ""}">
       <aside class="edit-panel" id="edit-panel" aria-label="Edit timetable" ${ui.edit ? "" : "hidden"}></aside>
       <div class="tt-main">
         <div class="tabs tt-tabs" role="tablist">
@@ -214,14 +224,22 @@ export async function renderTimetable(root, periodId, go, view = "streams", ui =
         ${ui.edit ? '<p class="edit-hint"><i class="ti ti-pointer"></i> Edit mode: click a paper or a hall to change it.</p>' : ""}
         <div class="tt-body"></div>
       </div>
-      <aside class="ai-panel" id="ai-panel" aria-label="AI assistant" ${ui.ai ? "" : "hidden"}>
+      <aside class="ai-panel right-panel" id="right-panel" aria-label="${right === "ai" ? "AI assistant" : "Load scale"}" ${right ? "" : "hidden"}>
+        <div class="tabs side-tabs" role="tablist">
+          <button role="tab" data-right="scale" class="${right === "scale" ? "active" : ""}"><i class="ti ti-chart-bar"></i> Load scale</button>
+          <button role="tab" data-right="ai" class="${right === "ai" ? "active" : ""}"><i class="ti ti-sparkles"></i> AI</button>
+          <button class="side-close" data-right="" aria-label="Close side panel"><i class="ti ti-x"></i></button>
+        </div>
+        <div id="right-body" class="right-body"></div>
       </aside>
     </div>`;
 
   root.querySelector("#print").addEventListener("click", () => window.print());
   const rerender = (extra = {}) => renderTimetable(root, periodId, go, view, { ...ui, keep: true, ...extra });
   root.querySelector("#edit-toggle").addEventListener("click", () => rerender({ edit: !ui.edit, sel: null }));
-  root.querySelector("#ai-toggle").addEventListener("click", () => rerender({ ai: !ui.ai }));
+  root.querySelector("#ai-toggle").addEventListener("click", () => rerender({ right: right === "ai" ? null : "ai" }));
+  root.querySelector("#scale-toggle").addEventListener("click", () => rerender({ right: right === "scale" ? null : "scale" }));
+  root.querySelectorAll("[data-right]").forEach((b) => b.addEventListener("click", () => rerender({ right: b.dataset.right || null })));
   root.querySelector("#publish").addEventListener("click", () => rerender({ edit: true, sel: null }));
 
   // the Edit panel (its tools are also used by the AI assistant)
@@ -232,7 +250,9 @@ export async function renderTimetable(root, periodId, go, view = "streams", ui =
   });
   const editor = ui.edit ? editorObj : null;
   if (editor) editor.select(ui.sel?.type, ui.sel?.id);
-  if (ui.ai) mountAI({ panel: root.querySelector("#ai-panel"), T, periodId, editor: editorObj, refresh: () => rerender({}) });
+  const rightBody = root.querySelector("#right-body");
+  if (right === "ai") mountAI({ panel: rightBody, T, periodId, editor: editorObj, refresh: () => rerender({}) });
+  if (right === "scale") mountScale({ panel: rightBody, T, ui, onWeek: (w) => { ui.week = w; } });
   function markSelected(sel) {
     root.querySelectorAll(".is-selected").forEach((x) => x.classList.remove("is-selected"));
     if (!sel) return;

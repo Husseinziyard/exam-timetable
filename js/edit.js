@@ -9,7 +9,7 @@
 // =====================================================================
 import { supabase } from "./config.js";
 import { toast } from "./crud.js";
-import { generate, workingDays, allocate, GRADE_WEIGHT, timeLabel } from "./engine.js";
+import { generate, workingDays, allocate, GRADE_WEIGHT, timeLabel, unavailable } from "./engine.js";
 import { buildInput, saveTimetable, loadAll } from "./generate.js";
 import { seatLabel, perRowOf } from "./viewer.js";
 
@@ -47,7 +47,8 @@ const onLeave = (T, id, date) => (T.staffLite.find((s) => s.id === id)?.leave ||
 export function candidates(T, date, session, role, keep = null) {
   const busy = busyIn(T, date, session), load = loads(T);
   return Object.values(T.staffById)
-    .filter((s) => canDo(s, role) && (s.id === keep || !busy.has(s.id)) && !onLeave(T, s.id, date))
+    .filter((s) => canDo(s, role) && (s.id === keep || !busy.has(s.id)) && !onLeave(T, s.id, date) &&
+      (s.id === keep || !unavailable(T.staffLite.find((x) => x.id === s.id) || {}, date, session)))
     .map((s) => ({ s, load: load[s.id] || 0 }))
     .sort((a, b) => a.load - b.load || a.s.full_name.localeCompare(b.s.full_name));
 }
@@ -224,7 +225,8 @@ export function mountEditor({ panel, T, periodId, reload, onSelect }) {
     const lockedDuties = T.halls.flatMap((h) => h.duties.filter((d) => d.locked).map((d) => ({ date: h.date, session: h.session, roomId: h.roomId, staffId: d.staffId, role: d.role })));
     const input = buildInput({ mods, batchesOf: data.batchesOf, batchById, departments: data.departments,
       rooms: data.rooms.filter((r) => roomSet.has(r.id) && !r.on_hold), staff: data.staff.filter((s) => staffSet.has(s.id)),
-      leave: data.leave, opts: { days, threshold: o.threshold ?? T.threshold, minGap: o.minGap ?? 1, seed: Date.now() % 100000 }, locked });
+      leave: data.leave, opts: { days, threshold: o.threshold ?? T.threshold, minGap: o.minGap ?? 1, seed: Date.now() % 100000 }, locked,
+      availability: data.availability, responses: data.responses, limits: data.limits });
     input.lockedDuties = lockedDuties;
     const result = generate(input);
     // replace this timetable's papers, halls and duties (cascade removes halls' papers and duties)

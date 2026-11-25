@@ -35,6 +35,7 @@
       <button role="tab" data-tab="all"><i class="ti ti-list"></i> All my duties</button>
       <button role="tab" data-tab="others"><i class="ti ti-users"></i> Other schedule</button>
       <button role="tab" data-tab="batch"><i class="ti ti-school"></i> Batch timetable</button>
+      <button role="tab" data-tab="avail"><i class="ti ti-calendar-user"></i> My availability</button>
     </div>
     <section id="panel" class="v-panel"></section>
   </main>
@@ -45,6 +46,7 @@
     import { requireRole, setupHeader } from "./js/auth.js";
     import { esc, fmtDate, todayIso, ROLE_NAMES, loadPeriod, publishedPeriods, downloadPdf,
              details, hallDetailsHtml, seatMap, periodPicker } from "./js/viewer.js";
+    import { renderMyAvailability } from "./js/availability.js";
 
     const me = await requireRole("lecturer");
     if (me) {
@@ -60,13 +62,28 @@
       document.getElementById("hello").textContent = mine ? `Hello, ${myName}` : "My exam duties";
 
       const periods = await publishedPeriods().catch(() => []);
+      // is there an open availability request waiting for an answer?
+      const { data: openRounds } = await supabase.from("availability_rounds").select("id").eq("is_open", true);
+      let pendingAnswer = false;
+      if (mine && openRounds?.length) {
+        const { data: done } = await supabase.from("availability_responses").select("round_id").eq("lecturer_id", mine.id).in("round_id", openRounds.map((r) => r.id));
+        pendingAnswer = (done || []).length < openRounds.length;
+      }
+      if (pendingAnswer) document.querySelector('[data-tab="avail"]').insertAdjacentHTML("beforeend", ' <span class="dot-badge" title="Please answer">!</span>');
+
       if (!periods.length) {
-        document.querySelector(".v-tabs").hidden = true;
         document.querySelector(".period-pick").hidden = true;
-        panel.innerHTML = `<div class="empty table-wrap"><p><strong>No timetable has been published yet.</strong></p>
-          <p class="muted">Your duties will appear here as soon as the admin publishes the exam timetable.</p></div>`;
+        const tabs = document.querySelectorAll(".v-tabs button");
+        const showEmpty = (t) => {
+          tabs.forEach((b) => { b.classList.toggle("active", b.dataset.tab === t); b.setAttribute("aria-selected", b.dataset.tab === t); });
+          if (t === "avail") return renderMyAvailability(panel, mine);
+          panel.innerHTML = `<div class="empty table-wrap"><p><strong>No timetable has been published yet.</strong></p>
+            <p class="muted">Your duties will appear here as soon as the admin publishes the exam timetable.</p></div>`;
+        };
+        tabs.forEach((b) => b.addEventListener("click", () => showEmpty(b.dataset.tab)));
+        showEmpty(pendingAnswer ? "avail" : "next");
       } else {
-        let T = null, tab = "next", weekStart = null;
+        let T = null, tab = pendingAnswer ? "avail" : "next", weekStart = null;
         const tabs = document.querySelectorAll(".v-tabs button");
 
         async function openPeriod(id) {
@@ -236,6 +253,7 @@
         function show(t) {
           tab = t;
           tabs.forEach((b) => { b.classList.toggle("active", b.dataset.tab === t); b.setAttribute("aria-selected", b.dataset.tab === t); });
+          if (t === "avail") return renderMyAvailability(panel, mine);
           panel.innerHTML = { next: nextView, week: weekView, all: allView, others: othersView, batch: batchView }[t]();
         }
         tabs.forEach((b) => b.addEventListener("click", () => show(b.dataset.tab)));
