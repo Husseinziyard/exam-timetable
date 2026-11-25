@@ -96,9 +96,12 @@ export async function loadPeriod(periodId) {
 export function seatLabel(rowIndex, seatIndex) {
   return `${String.fromCharCode(65 + rowIndex)}-${String(seatIndex + 1).padStart(2, "0")}`;
 }
+// How many seats per row a hall has (used by the seat map AND by seat allocation, so they always agree)
+export const perRowOf = (room) => room.seats_per_row || ((room.exam_capacity || 0) <= 40 ? 6 : 8);
+
 export function seatMap(room, { used = 0, highlight = null, repeats = 0 } = {}) {
   const cap = room.exam_capacity || 0;
-  const perRow = room.seats_per_row || (cap <= 40 ? 6 : 8);
+  const perRow = perRowOf(room);
   const rows = room.seat_rows || Math.max(1, Math.ceil(cap / perRow));
   const S = 30, G = 8, aisleAfter = perRow > 4 ? Math.ceil(perRow / 2) : 99, AISLE = 18;
   const left = 46, top = 78;

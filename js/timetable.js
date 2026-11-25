@@ -6,6 +6,8 @@ import { supabase } from "./config.js";
 import { toast } from "./crud.js";
 import { validate, timeLabel, SESSION_START } from "./engine.js";
 import { openGenerateDialog, studentsFor } from "./generate.js";
+import { mountEditor } from "./edit.js";
+import { workingDays } from "./engine.js";
 
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -146,8 +148,9 @@ export async function loadTimetable(periodId) {
 // =====================================================================
 // THE TIMETABLE PAGE
 // =====================================================================
-export async function renderTimetable(root, periodId, go, view = "streams") {
-  root.innerHTML = `<p class="loading">Loading timetable…</p>`;
+export async function renderTimetable(root, periodId, go, view = "streams", ui = {}) {
+  const scrollY = root.scrollTop;
+  if (!ui.keep) root.innerHTML = `<p class="loading">Loading timetable…</p>`;
   let T;
   try { T = await loadTimetable(periodId); }
   catch (err) { root.innerHTML = `<p class="msg show error">${esc(err.message)}</p>`; return; }
@@ -157,7 +160,9 @@ export async function renderTimetable(root, periodId, go, view = "streams") {
   const strict = new Set(depts.filter((d) => d.one_exam_per_day).map((d) => d.id));
   for (const id in T.batchLite) T.batchLite[id].onePerDay = strict.has(T.batchById[id]?.department_id);
 
-  const checks = validate({
+  const holidays = await q(supabase.from("holidays").select("holiday_date"));
+  T.days = workingDays(T.period.start_date, T.period.end_date, holidays.map((h) => h.holiday_date));
+  const checks = T.checks = validate({
     exams: T.exams, halls: T.halls, moduleBatches: T.batchesOf, moduleStudents: T.moduleStudents,
     moduleCode: Object.fromEntries(Object.values(T.moduleById).map((m) => [m.id, m.code])),
     batches: T.batchLite, staff: T.staffLite, threshold: T.threshold,
@@ -180,7 +185,9 @@ export async function renderTimetable(root, periodId, go, view = "streams") {
       </div>
       <div class="tt-actions">
         <button class="btn light" id="print"><i class="ti ti-printer"></i> Print</button>
-        <button class="btn" id="publish" disabled title="Coming in the next step">Publish</button>
+        <button class="btn light toggle ${ui.edit ? "on" : ""}" id="edit-toggle" aria-pressed="${!!ui.edit}"><i class="ti ti-pencil"></i> Edit</button>
+        <button class="btn light toggle ${ui.ai ? "on" : ""}" id="ai-toggle" aria-pressed="${!!ui.ai}"><i class="ti ti-sparkles"></i> AI assistant</button>
+        <button class="btn" id="publish">${p.status === "published" ? '<i class="ti ti-eye"></i> Published' : '<i class="ti ti-send"></i> Publish…'}</button>
       </div>
     </div>
 
@@ -195,14 +202,53 @@ export async function renderTimetable(root, periodId, go, view = "streams") {
       <ul class="health-list">${checks.map((c) => `<li class="${c.level}">${esc(c.text)}</li>`).join("") || "<li class='info'>No issues found.</li>"}</ul>
     </details>
 
-    <div class="tabs tt-tabs" role="tablist">
-      <button role="tab" data-view="streams">By stream</button>
-      <button role="tab" data-view="halls">Halls &amp; staff</button>
-      <button role="tab" data-view="load">Staff load</button>
-    </div>
-    <div class="tt-body"></div>`;
+    <div class="tt-layout ${ui.edit ? "with-edit" : ""} ${ui.ai ? "with-ai" : ""}">
+      <aside class="edit-panel" id="edit-panel" aria-label="Edit timetable" ${ui.edit ? "" : "hidden"}></aside>
+      <div class="tt-main">
+        <div class="tabs tt-tabs" role="tablist">
+          <button role="tab" data-view="streams">By stream</button>
+          <button role="tab" data-view="halls">Halls &amp; staff</button>
+          <button role="tab" data-view="load">Staff load</button>
+        </div>
+        ${ui.edit ? '<p class="edit-hint"><i class="ti ti-pointer"></i> Edit mode: click a paper or a hall to change it.</p>' : ""}
+        <div class="tt-body"></div>
+      </div>
+      <aside class="ai-panel" id="ai-panel" aria-label="AI assistant" ${ui.ai ? "" : "hidden"}>
+        <div class="ep-head"><h3><i class="ti ti-sparkles"></i> AI assistant</h3></div>
+        <p class="small">Ask in plain words, e.g. <i>“Dr. Perera is on leave on 18 Nov — replace her”</i> or
+          <i>“Give ADSC a free day before every exam”</i>. The assistant suggests changes and you approve each one.</p>
+        <div class="ai-setup">
+          <p class="ep-label">Not connected yet</p>
+          <p class="small muted">The assistant needs a free Google Gemini key and a small server function in Supabase,
+            so the key is never visible in the website. This is the next setup step.</p>
+        </div>
+        <textarea class="ai-input" rows="3" placeholder="Ask the assistant…" disabled></textarea>
+        <button class="btn full" disabled>Ask</button>
+      </aside>
+    </div>`;
 
   root.querySelector("#print").addEventListener("click", () => window.print());
+  const rerender = (extra = {}) => renderTimetable(root, periodId, go, view, { ...ui, keep: true, ...extra });
+  root.querySelector("#edit-toggle").addEventListener("click", () => rerender({ edit: !ui.edit, sel: null }));
+  root.querySelector("#ai-toggle").addEventListener("click", () => rerender({ ai: !ui.ai }));
+  root.querySelector("#publish").addEventListener("click", () => rerender({ edit: true, sel: null }));
+
+  // the Edit panel
+  let editor = null;
+  if (ui.edit) {
+    editor = mountEditor({
+      panel: root.querySelector("#edit-panel"), T, periodId,
+      reload: (sel) => rerender({ edit: true, sel }),
+      onSelect: () => markSelected(null),
+    });
+    editor.select(ui.sel?.type, ui.sel?.id);
+  }
+  function markSelected(sel) {
+    root.querySelectorAll(".is-selected").forEach((x) => x.classList.remove("is-selected"));
+    if (!sel) return;
+    const attr = sel.type === "exam" ? "data-exam" : "data-hall";
+    root.querySelectorAll(`[${attr}="${sel.id}"]`).forEach((x) => x.classList.add("is-selected"));
+  }
   const body = root.querySelector(".tt-body");
   const tabs = root.querySelectorAll(".tt-tabs button");
 
@@ -212,6 +258,7 @@ export async function renderTimetable(root, periodId, go, view = "streams") {
     if (v === "streams") body.innerHTML = streamsView();
     if (v === "halls") body.innerHTML = hallsView();
     if (v === "load") body.innerHTML = loadView();
+    if (ui.sel) markSelected(ui.sel);
   }
   tabs.forEach((t) => t.addEventListener("click", () => show(t.dataset.view)));
 
@@ -226,8 +273,8 @@ export async function renderTimetable(root, periodId, go, view = "streams") {
       .map((e) => {
         const m = mod(e.moduleId);
         const rooms = hallsOfExam(e.id).map((h) => h.roomName).join(", ");
-        return `<button class="paper ${e.session.toLowerCase()}" data-exam="${e.id}" title="${esc(m.name)}">
-          <span class="code">${esc(m.code)}</span>
+        return `<button class="paper ${e.session.toLowerCase()}" data-exam="${e.id}" title="${esc(m.name)}${e.locked ? " (locked)" : ""}">
+          <span class="code">${esc(m.code)}${e.locked ? ' <i class="ti ti-lock lock" aria-label="locked"></i>' : ""}</span>
           <span class="time">${timeLabel(e.session, m.duration_hours)}</span>
           <span class="rooms">${esc(rooms)}</span></button>`;
       }).join("");
@@ -254,7 +301,7 @@ export async function renderTimetable(root, periodId, go, view = "streams") {
         <div class="table-wrap"><table class="data duty-table">
           <thead><tr><th>Hall</th><th>Papers</th><th>Students</th><th>Supervisor</th><th>Invigilators</th><th>Hall attendant</th></tr></thead>
           <tbody>${hs.map((h) => {
-            const by = (r) => h.duties.filter((d) => d.role === r).map((d) => esc(staffName(d.staffId))).join("<br>") || '<span class="missing">—</span>';
+            const by = (r) => h.duties.filter((d) => d.role === r).map((d) => esc(staffName(d.staffId)) + (d.locked ? ' <i class="ti ti-lock lock" aria-label="locked"></i>' : "")).join("<br>") || '<span class="missing">—</span>';
             const total = h.exams.reduce((a, x) => a + x.seats, 0);
             return `<tr data-hall="${h.id}" tabindex="0" title="Click for details">
               <td><b>${esc(h.roomName)}</b></td>
@@ -314,6 +361,12 @@ export async function renderTimetable(root, periodId, go, view = "streams") {
     const paper = e.target.closest("[data-exam]");
     const hallRow = e.target.closest("[data-hall]");
     const staffRow = e.target.closest("[data-staff]");
+    if (editor && (paper || hallRow)) {           // edit mode: open it in the Edit panel
+      const sel = paper ? { type: "exam", id: Number(paper.dataset.exam) } : { type: "hall", id: Number(hallRow.dataset.hall) };
+      editor.select(sel.type, sel.id);
+      ui.sel = sel;
+      return markSelected(sel);
+    }
     if (paper) {
       const ex = T.exams.find((x) => x.id === Number(paper.dataset.exam));
       const m = mod(ex.moduleId);
@@ -348,4 +401,6 @@ export async function renderTimetable(root, periodId, go, view = "streams") {
   body.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.matches("[data-hall],[data-staff]")) e.target.click(); });
 
   show(view);
+  if (ui.sel) markSelected(ui.sel);
+  if (ui.keep) root.scrollTop = scrollY;
 }
