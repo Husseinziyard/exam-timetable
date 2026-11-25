@@ -41,7 +41,7 @@
     import { supabase } from "./js/config.js";
     import { requireRole, setupHeader } from "./js/auth.js";
     import { esc, fmtDate, todayIso, ROLE_NAMES, loadPeriod, publishedPeriods, details, hallDetailsHtml,
-             periodPicker, pdfHalls, pdfBatches, pdfStaff, timetableBatches } from "./js/viewer.js";
+             periodPicker, pdfFacultySheet, pdfBatches, pdfStaff, timetableBatches } from "./js/viewer.js";
     import { renderMyAvailability } from "./js/availability.js";
 
     const me = await requireRole("lecturer");
@@ -183,11 +183,11 @@
           dl.disabled = true;
           try {
             if (kind === "mine") await pdfStaff(T, period, mine.id, myName);
-            if (kind === "all") await pdfHalls(T, period, { title: "Exam timetable — all halls and staff", filename: "exam-timetable-all.pdf" });
+            if (kind === "all") await pdfFacultySheet(T, period, { filename: "supervisor-invigilator-list.pdf" });
             if (kind === "shown") {
               const bits = [filt.staff && `Lecturer: ${T.name(Number(filt.staff))}`, filt.room && `Hall: ${T.halls.find((h) => String(h.room.id) === filt.room)?.room.name}`,
                 filt.date && `Date: ${fmtDate(filt.date)}`, filt.batch && `Batch: Intake ${T.batchById[filt.batch].intake} ${T.batchById[filt.batch].stream}`].filter(Boolean);
-              await pdfHalls(T, period, { title: "Exam timetable — selection", halls: filtered(), note: bits.join(", "), filename: "exam-timetable-selection.pdf" });
+              await pdfFacultySheet(T, period, { halls: filtered(), note: `Selection: ${bits.join(", ")}`, filename: "supervisor-invigilator-list-selection.pdf" });
             }
             if (kind === "batch") {
               const id = panel.querySelector("#dl-batch").value;

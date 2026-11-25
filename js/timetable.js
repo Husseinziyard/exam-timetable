@@ -12,7 +12,7 @@ import { mountScale } from "./scale.js";
 import { availabilityMap, preferenceMap } from "./generate.js";
 import { DEFAULT_WEEKLY_LIMITS } from "./engine.js";
 import { workingDays } from "./engine.js";
-import { examLinks, loadPeriod, pdfHalls, pdfBatches, pdfAllStaff, timetableBatches } from "./viewer.js";
+import { examLinks, loadPeriod, pdfFacultySheet, pdfBatches, pdfAllStaff, timetableBatches } from "./viewer.js";
 import { findDraftCopy, copyPeriod, deletePeriod, confirmDelete } from "./versions.js";
 
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) =>
@@ -533,7 +533,7 @@ async function downloadDialog(periodId, period) {
         <label class="dl-opt"><input type="radio" name="dl" value="batch">
           <span><b>One batch</b><small><select id="dl-batch">${batches.map((b) => `<option value="${b.id}">Intake ${b.intake} · ${esc(b.stream || b.degree)}</option>`).join("")}</select></small></span></label>
         <label class="dl-opt"><input type="radio" name="dl" value="halls">
-          <span><b>Whole timetable — halls and staff</b><small>Every hall session with papers, students, supervisor, invigilators and hall attendant.</small></span></label>
+          <span><b>Supervisor / invigilator list (whole timetable)</b><small>The faculty layout: week by week, every hall with papers, students, supervisor, invigilators and hall attendant.</small></span></label>
         <label class="dl-opt"><input type="radio" name="dl" value="staff">
           <span><b>Staff duty lists</b><small>One page per staff member: where and when they must be.</small></span></label>
       </div>
@@ -554,7 +554,7 @@ async function downloadDialog(periodId, period) {
         const b = V.batchById[dlg.querySelector("#dl-batch").value];
         await pdfBatches(V, period, [b.id], `exam-timetable-intake-${b.intake}-${String(b.stream).replace(/\W+/g, "-")}.pdf`);
       }
-      if (kind === "halls") await pdfHalls(V, period, { title: "Exam timetable — all halls and staff", filename: "exam-timetable-halls-staff.pdf" });
+      if (kind === "halls") await pdfFacultySheet(V, period, { filename: "supervisor-invigilator-list.pdf" });
       if (kind === "staff") await pdfAllStaff(V, period);
       dlg.close();
     } catch (err) { toast(err.message || String(err), "error"); btn.disabled = false; btn.textContent = "Download PDF"; }

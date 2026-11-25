@@ -151,16 +151,36 @@ export function seatMap(room, { used = 0, highlight = null, repeats = 0 } = {}) 
 // =====================================================================
 // PDF (made in the browser — nothing is sent anywhere)
 // =====================================================================
+// The PDF library + its table add-on, loaded the classic way (the add-on attaches itself to jsPDF)
+export const PDF_LIBS = [
+  "https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js",
+  "https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.4/dist/jspdf.plugin.autotable.min.js",
+];
+let pdfReady = null;
+function loadScript(src) {
+  return new Promise((ok, fail) => {
+    if (document.querySelector(`script[src="${src}"]`)?.dataset.loaded) return ok();
+    const el = document.createElement("script");
+    el.src = src;
+    el.onload = () => { el.dataset.loaded = "1"; ok(); };
+    el.onerror = () => fail(new Error("Couldn't load the PDF tool. Check your internet connection and try again."));
+    document.head.appendChild(el);
+  });
+}
+async function loadPdfLibrary() {
+  pdfReady ||= (async () => {
+    if (!window.jspdf?.jsPDF) await loadScript(PDF_LIBS[0]);
+    if (typeof window.jspdf.jsPDF.API.autoTable !== "function") await loadScript(PDF_LIBS[1]);
+    if (typeof window.jspdf.jsPDF.API.autoTable !== "function") throw new Error("The PDF table tool didn't load. Please refresh the page and try again.");
+    return window.jspdf.jsPDF;
+  })().catch((e) => { pdfReady = null; throw e; });
+  return pdfReady;
+}
+
 export async function downloadPdf({ title, subtitle = "", head, body, filename, landscape = true, sections = null }) {
-  const jsMod = await import("https://cdn.jsdelivr.net/npm/jspdf@2.5.2/+esm");
-  const jsPDF = jsMod.jsPDF || jsMod.default?.jsPDF || jsMod.default;
-  const atMod = await import("https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.4/+esm");
+  const jsPDF = await loadPdfLibrary();
   const doc = new jsPDF({ orientation: landscape ? "landscape" : "portrait", unit: "pt", format: "a4" });
-  // the CDN can package the table plugin in different shapes — find the function wherever it is
-  const fn = [atMod.default, atMod.autoTable, atMod.default?.default, atMod.default?.autoTable].find((f) => typeof f === "function");
-  const applyPlugin = atMod.applyPlugin || atMod.default?.applyPlugin;
-  if (!fn && typeof doc.autoTable !== "function" && applyPlugin) applyPlugin(jsPDF);
-  const autoTable = fn || ((d, opts) => d.autoTable(opts));
+  const autoTable = (d, opts) => d.autoTable(opts);
   const footer = () => {
     doc.setFontSize(8); doc.setTextColor(140);
     doc.text(`Exam Timetable System · generated ${new Date().toLocaleString("en-GB")}`, 40, doc.internal.pageSize.getHeight() - 20);
@@ -204,6 +224,135 @@ export const HALL_HEAD = ["Date", "Time", "Exam hall", "Papers", "Batches", "Stu
 
 export function pdfHalls(T, period, { title = "Exam timetable — halls and staff", halls = T.halls, note = "", filename = "exam-timetable.pdf" } = {}) {
   return downloadPdf({ title, subtitle: [periodLine(period), note].filter(Boolean).join(" · "), head: HALL_HEAD, body: hallRows(halls), filename });
+}
+
+// =====================================================================
+// FACULTY SHEET — the "Supervisor / Invigilator list" in the faculty's usual layout:
+// one block per week, rows grouped by day → session → intake → hall, with merged cells.
+// =====================================================================
+export const FACULTY_NAME = "FACULTY OF MANAGEMENT, SOCIAL SCIENCES & HUMANITIES";
+const SESSION_TIME = { AM: "0900H - 1200H", PM: "1300H - 1600H" };
+const ord = (n) => ["", "1ST", "2ND", "3RD"][n] || `${n}TH`;
+const pad2 = (n) => String(n).padStart(2, "0");
+const dmy = (iso) => iso.split("-").reverse().join(".");
+const mondayOf = (iso) => { const d = new Date(iso + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)); return d.toISOString().slice(0, 10); };
+
+// Rows of the sheet for the given hall sessions (already filtered if needed)
+export function facultyRows(T, halls) {
+  const rows = [];
+  const firstIntake = (h) => Math.max(...h.papers.flatMap((p) => p.exam?.streams.map((b) => b.intake) || [0]));
+  const firstStream = (h) => h.papers.flatMap((p) => p.exam?.streams.map((b) => b.stream) || [""]).sort()[0] || "";
+  const sorted = [...halls].sort((a, b) => a.date.localeCompare(b.date) || a.session.localeCompare(b.session) ||
+    firstIntake(b) - firstIntake(a) || firstStream(a).localeCompare(firstStream(b)) || a.room.name.localeCompare(b.room.name, undefined, { numeric: true }));
+  for (const h of sorted) {
+    const staff = (r) => h.duties.filter((d) => d.role === r).map((d, i, all) => (all.length > 1 ? `${i + 1}. ` : "") + d.name).join("\n");
+    const papers = [...h.papers].sort((a, b) => (a.exam?.streams[0]?.stream || "").localeCompare(b.exam?.streams[0]?.stream || ""));
+    for (const p of papers) {
+      const e = p.exam; if (!e) continue;
+      const m = e.module, bs = e.streams;
+      const rep = Number(m.repeat_students) || 0;
+      const one = e.halls.length === 1;
+      rows.push({
+        date: h.date, session: h.session, hallId: h.id,
+        intake: [...new Set(bs.map((b) => b.intake))].join("/"),
+        sem: [...new Set(bs.map((b) => pad2(b.semester ?? m.semester)))].join("/"),
+        streams: bs.map((b) => b.stream || b.degree).join("\n"),
+        subject: `${m.name}\n[${m.code}]\n[${pad2(m.duration_hours || 3)} Hours]`,
+        stu: one && rep ? `P${p.seats - rep} + R${pad2(rep)}` : `P${p.seats}`,
+        count: String(p.seats), total: String(h.students), hall: h.room.name,
+        sup: staff("SUPERVISOR"), inv: staff("INVIGILATOR"), ha: staff("ATTENDANT"),
+      });
+    }
+  }
+  return rows;
+}
+
+export async function pdfFacultySheet(T, period, { halls = T.halls, note = "", filename = "exam-supervisor-invigilator-list.pdf" } = {}) {
+  const jsPDF = await loadPdfLibrary();
+  const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+  const W = doc.internal.pageSize.getWidth(), M = 24;
+  const all = facultyRows(T, halls);
+  const intakes = [...new Set(all.flatMap((r) => r.intake.split("/")))].sort((a, b) => b - a);
+  const sems = [...new Set(all.flatMap((r) => r.sem.split("/")))].sort().map(Number);
+  const streams = [...new Set(all.flatMap((r) => r.streams.split("\n")))].sort();
+  const weeks = [...new Set(all.map((r) => mondayOf(r.date)))].sort();
+  const firstWeek = period?.start_date ? mondayOf(period.start_date) : weeks[0];
+  const weekNo = (mon) => Math.round((new Date(mon) - new Date(firstWeek)) / 604800000) + 1;
+  const head = [["DATE", "TIME", "INT.", "SEM.", "DEGREE PRO.", "SUBJECT/S", { content: "STU. ST.", colSpan: 3 }, "EX HALL", "SUPERVISOR", "INVIGILATOR", "HA"]];
+  const footer = () => {
+    doc.setFontSize(7); doc.setTextColor(120); doc.setFont("times", "normal");
+    const n = doc.internal.getNumberOfPages();
+    doc.text(`Page ${doc.internal.getCurrentPageInfo().pageNumber} of ${n}`, W / 2, doc.internal.pageSize.getHeight() - 14, { align: "center" });
+  };
+  if (!all.length) weeks.push(firstWeek);
+  weeks.forEach((mon, wi) => {
+    if (wi > 0) doc.addPage();
+    const rows = all.filter((r) => mondayOf(r.date) === mon);
+    const last = rows.length ? rows[rows.length - 1].date : mon;
+    // title block
+    doc.setTextColor(0); doc.setFont("times", "bold"); doc.setFontSize(10);
+    const lines = [FACULTY_NAME,
+      `${sems.map(ord).join(" AND ")} SEMESTER EXAMINATIONS - INTAKE ${intakes.join(" & ")} ${period ? `(${period.name.toUpperCase()})` : ""}`.trim(),
+      "SUPERVISOR / INVIGILATOR LIST",
+      `${streams.join("/")} DEGREE PROGRAMMES`,
+      `WEEK ${pad2(weekNo(mon))} (${dmy(rows[0]?.date || mon)} - ${dmy(last)})`];
+    if (note) lines.push(note.toUpperCase());
+    let y = 34;
+    lines.forEach((t) => {
+      const wrapped = doc.splitTextToSize(t, W - 2 * M);
+      wrapped.forEach((w) => { doc.text(w, M, y); doc.line(M, y + 2, M + doc.getTextWidth(w), y + 2); y += 13; });
+    });
+    // body with merged cells (rowSpan): date, time, intake/sem, and everything about a hall
+    const body = [];
+    const span = (i, key) => { let n = 1; while (i + n < rows.length && key(rows[i + n]) === key(rows[i])) n++; return n; };
+    const startOf = (i, key) => i === 0 || key(rows[i - 1]) !== key(rows[i]);
+    const kSes = (r) => r.date + r.session, kInt = (r) => r.date + r.session + r.intake + "|" + r.sem, kHall = (r) => r.hallId;
+    rows.forEach((r, i) => {
+      const row = [];
+      const cell = (content, key, extra = {}) => { if (startOf(i, key)) row.push({ content, rowSpan: span(i, key), ...extra }); };
+      cell(`${fmtDate(r.date, { day: "2-digit", month: "short" }).replace(" ", "-")}\n[${new Date(r.date + "T00:00:00Z").toLocaleDateString("en-GB", { weekday: "long", timeZone: "UTC" }).toUpperCase()}]`, kSes);
+      cell(SESSION_TIME[r.session], kSes, { styles: { fillColor: [245, 205, 170], halign: "center" } });
+      cell(r.intake, kInt, { styles: { fillColor: [245, 205, 170], halign: "center" } });
+      cell(r.sem, kInt, { styles: { halign: "center" } });
+      row.push(r.streams, r.subject, r.stu, r.count);
+      cell(r.total, kHall, { styles: { halign: "center", valign: "middle" } });
+      cell(r.hall, kHall, { styles: { halign: "center", valign: "middle" } });
+      cell(r.sup, kHall); cell(r.inv, kHall); cell(r.ha, kHall, { styles: { halign: "center" } });
+      body.push(row);
+    });
+    doc.autoTable({
+      head, body: body.length ? body : [[{ content: "No exams this week.", colSpan: 13 }]], startY: y + 4, theme: "grid",
+      margin: { left: M, right: M, bottom: 28 }, rowPageBreak: "avoid", showHead: "everyPage",
+      styles: { font: "times", fontSize: 7.2, cellPadding: 2.5, textColor: 0, lineColor: [60, 60, 60], lineWidth: 0.5, valign: "top", overflow: "linebreak" },
+      headStyles: { fillColor: [255, 255, 255], textColor: 0, fontStyle: "bold", halign: "center", valign: "middle" },
+      columnStyles: { 0: { cellWidth: 46 }, 1: { cellWidth: 38 }, 2: { cellWidth: 20 }, 3: { cellWidth: 20 }, 4: { cellWidth: 38 },
+        5: { cellWidth: 112 }, 6: { cellWidth: 34 }, 7: { cellWidth: 20, halign: "center" }, 8: { cellWidth: 22 }, 9: { cellWidth: 28 },
+        10: { cellWidth: 66 }, 11: { cellWidth: 66 }, 12: { cellWidth: 27 } },
+      didDrawPage: footer,
+    });
+  });
+  // closing block on the last page: notes, signature, distribution
+  let y = doc.lastAutoTable.finalY + 22;
+  if (y > doc.internal.pageSize.getHeight() - 150) { doc.addPage(); y = 50; }
+  doc.setFont("times", "bold"); doc.setFontSize(8.5); doc.setTextColor(0);
+  doc.text("NOTES -", M, y);
+  doc.text("# P = STUDENTS OF THE BATCH, R = REPEAT STUDENTS. PAPER DURATION IS SHOWN UNDER EACH SUBJECT.", M + 60, y);
+  doc.text("# PLEASE REPORT TO THE EXAMINATION HALL 30 MINUTES BEFORE THE SESSION STARTS.", M + 60, y + 13);
+  y += 58;
+  doc.setFont("times", "normal"); doc.text("................................................", M, y);
+  doc.setFont("times", "bold"); doc.text("Dean - FMSH", M, y + 13);
+  doc.setFont("times", "normal");
+  doc.text("Distribution  -", M, y + 40);
+  ["All HoDs - FMSH", "All Supervisors & Invigilators", "All Hall Attendants", "DR - Examinations"].forEach((t, i) => doc.text(t, M + 90, y + 40 + i * 12));
+  // fix "Page x of y" now that we know the total
+  const n = doc.internal.getNumberOfPages();
+  for (let i = 1; i <= n; i++) {
+    doc.setPage(i); doc.setFillColor(255, 255, 255);
+    doc.rect(W / 2 - 40, doc.internal.pageSize.getHeight() - 24, 80, 14, "F");
+    doc.setFontSize(7); doc.setTextColor(120); doc.setFont("times", "normal");
+    doc.text(`Page ${i} of ${n}`, W / 2, doc.internal.pageSize.getHeight() - 14, { align: "center" });
+  }
+  doc.save(filename);
 }
 
 // One batch (or several, one page each): the timetable to email to students
