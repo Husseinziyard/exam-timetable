@@ -677,7 +677,7 @@ export async function renderOverview(root, onNavigate) {
     <div class="generate-card">
       <div>
         <h2>Generate timetable</h2>
-        <p>Pick the exam period and what to include. The system plans dates, halls, supervisors, invigilators and seats.</p>
+        <p>Pick the exam period and what to include. The system plans dates, halls, supervisors, invigilators and hall attendants.</p>
       </div>
       <button class="btn big" id="generate" disabled title="Coming in the next step">Generate timetable</button>
     </div>
@@ -686,7 +686,7 @@ export async function renderOverview(root, onNavigate) {
 
   const items = [
     ["lecturers", "Staff"], ["rooms", "Classes"], ["modules", "Modules"],
-    ["batches", "Batches"], ["students", "Students"], ["holidays", "Holidays"], ["departments", "Departments"],
+    ["batches", "Batches"], ["holidays", "Holidays"], ["departments", "Departments"],
   ];
   const counts = await Promise.all(items.map(async ([k]) => {
     const t = SECTIONS[k].table;

@@ -2,16 +2,15 @@
 import { supabase } from "./config.js";
 
 // Which page each role lands on after logging in
-export const HOME = { admin: "admin.html", lecturer: "lecturer.html", student: "student.html" };
+export const HOME = { admin: "admin.html", lecturer: "lecturer.html" };
 
 // Which roles may enter through each door on the front page
 export const ALLOWED = {
   admin: ["admin"],
   lecturer: ["lecturer", "admin"],   // an admin is also a lecturer
-  student: ["student", "admin"],    // an admin can preview the student view
 };
 
-// Ask the database who this user is: 'admin' | 'lecturer' | 'student' | 'none'
+// Ask the database who this user is: 'admin' | 'lecturer' | 'none'
 export async function getRole() {
   const { data, error } = await supabase.rpc("my_role");
   if (error) throw error;
@@ -27,7 +26,7 @@ export async function requireRole(door) {
     return null;
   }
   const role = await getRole();
-  if (!ALLOWED[door].includes(role)) {
+  if (!ALLOWED[door]?.includes(role)) {
     await supabase.auth.signOut();
     location.replace(`login.html?role=${door}&denied=1`);
     return null;

@@ -109,17 +109,7 @@ export const SECTIONS = {
     example: { intake: "43", stream: "MTS", degree: "BSc in MTS", department: "Department of Management", semester: "2", student_count: "42" },
   },
 
-  students: {
-    title: "Students", singular: "student", table: "students", pk: "index_no", pkEditable: true, order: "index_no", conflict: "index_no", hold: true,
-    help: "Students are seated by index number; repeat students sit at the back. Use sample data until the faculty approves real data.",
-    fields: [
-      { key: "index_no", label: "Index number", required: true, list: true },
-      { key: "full_name", label: "Full name", required: true, list: true },
-      { key: "batch_id", label: "Batch", type: "fk", ref: "batches", required: true, list: true, csv: "batch" },
-      { key: "email", label: "Email (used to log in)", type: "email", list: true, lower: true },
-    ],
-    example: { index_no: "D/BSC/43/0001", full_name: "Sample Student", batch: "43|MTS", email: "student1@example.lk" },
-  },
+
 
   holidays: {
     title: "Calendar", singular: "holiday", table: "holidays", pk: "holiday_date", pkEditable: true, order: "holiday_date", conflict: "holiday_date", hold: false,
@@ -143,10 +133,10 @@ export const SECTIONS = {
 };
 
 // Order of items in the sidebar
-export const NAV = ["lecturers", "rooms", "modules", "batches", "students", "holidays", "departments"];
+export const NAV = ["lecturers", "rooms", "modules", "batches", "holidays", "departments"];
 
 // Sidebar icons (Tabler icon names)
 export const ICONS = {
   overview: "ti-layout-dashboard", lecturers: "ti-users", rooms: "ti-door", modules: "ti-book",
-  batches: "ti-school", students: "ti-id-badge-2", holidays: "ti-calendar", departments: "ti-building",
+  batches: "ti-school", holidays: "ti-calendar", departments: "ti-building",
 };

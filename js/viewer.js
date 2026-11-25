@@ -151,26 +151,106 @@ export function seatMap(room, { used = 0, highlight = null, repeats = 0 } = {}) 
 // =====================================================================
 // PDF (made in the browser — nothing is sent anywhere)
 // =====================================================================
-export async function downloadPdf({ title, subtitle = "", head, body, filename, landscape = true }) {
+export async function downloadPdf({ title, subtitle = "", head, body, filename, landscape = true, sections = null }) {
   const { jsPDF } = await import("https://cdn.jsdelivr.net/npm/jspdf@2.5.2/+esm");
   const { default: autoTable } = await import("https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.4/+esm");
   const doc = new jsPDF({ orientation: landscape ? "landscape" : "portrait", unit: "pt", format: "a4" });
-  doc.setFontSize(16); doc.setFont("helvetica", "bold");
-  doc.text(title, 40, 46);
-  doc.setFontSize(10); doc.setFont("helvetica", "normal"); doc.setTextColor(90);
-  if (subtitle) doc.text(subtitle, 40, 64);
-  autoTable(doc, {
-    head: [head], body, startY: subtitle ? 80 : 64,
-    styles: { fontSize: 9, cellPadding: 5, valign: "top" },
-    headStyles: { fillColor: [19, 32, 58], textColor: 245 },
-    alternateRowStyles: { fillColor: [247, 246, 242] },
-    margin: { left: 40, right: 40 },
-    didDrawPage: () => {
-      doc.setFontSize(8); doc.setTextColor(140);
-      doc.text(`Exam Timetable System · generated ${new Date().toLocaleString("en-GB")}`, 40, doc.internal.pageSize.getHeight() - 20);
-    },
+  const footer = () => {
+    doc.setFontSize(8); doc.setTextColor(140);
+    doc.text(`Exam Timetable System · generated ${new Date().toLocaleString("en-GB")}`, 40, doc.internal.pageSize.getHeight() - 20);
+  };
+  // one table, or several (e.g. one per batch, each on its own page)
+  const parts = sections || [{ title, subtitle, head, body }];
+  parts.forEach((part, i) => {
+    if (i > 0) doc.addPage();
+    doc.setTextColor(20); doc.setFontSize(16); doc.setFont("helvetica", "bold");
+    doc.text(part.title, 40, 46);
+    doc.setFontSize(10); doc.setFont("helvetica", "normal"); doc.setTextColor(90);
+    const sub = part.subtitle ?? subtitle;
+    if (sub) doc.text(sub, 40, 64);
+    autoTable(doc, {
+      head: [part.head], body: part.body.length ? part.body : [[{ content: "Nothing to show.", colSpan: part.head.length }]],
+      startY: sub ? 80 : 64,
+      styles: { fontSize: 9, cellPadding: 5, valign: "top" },
+      headStyles: { fillColor: [19, 32, 58], textColor: 245 },
+      alternateRowStyles: { fillColor: [247, 246, 242] },
+      margin: { left: 40, right: 40 },
+      didDrawPage: footer,
+    });
   });
   doc.save(filename);
+}
+
+// ----- Ready-made PDFs (used by the admin and lecturer pages) -----
+const staffOf = (h, role) => h.duties.filter((d) => d.role === role).map((d) => d.name).join("\n");
+const hallTime = (h) => h.papers.map((p) => p.exam?.time).filter(Boolean)[0] || (h.session === "AM" ? "09:00" : "13:00");
+const batchLabel = (b) => `Intake ${b.intake} ${b.stream || b.degree}`;
+const periodLine = (p) => p ? `${p.name} · ${fmtDate(p.start_date, { day: "numeric", month: "long" })} – ${fmtDate(p.end_date, { day: "numeric", month: "long", year: "numeric" })}` : "";
+
+// Every hall session: where, when, which papers, who is on duty
+export function hallRows(halls) {
+  return halls.map((h) => [fmtDate(h.date, { weekday: "short", day: "2-digit", month: "short" }), hallTime(h), h.room.name,
+    h.papers.map((p) => `${p.exam?.module.code} ${p.exam?.module.name}`).join("\n"),
+    [...new Set(h.papers.flatMap((p) => p.exam?.streams.map(batchLabel) || []))].join(", "),
+    String(h.students), staffOf(h, "SUPERVISOR"), staffOf(h, "INVIGILATOR"), staffOf(h, "ATTENDANT")]);
+}
+export const HALL_HEAD = ["Date", "Time", "Exam hall", "Papers", "Batches", "Students", "Supervisor", "Invigilators", "Hall attendant"];
+
+export function pdfHalls(T, period, { title = "Exam timetable — halls and staff", halls = T.halls, note = "", filename = "exam-timetable.pdf" } = {}) {
+  return downloadPdf({ title, subtitle: [periodLine(period), note].filter(Boolean).join(" · "), head: HALL_HEAD, body: hallRows(halls), filename });
+}
+
+// One batch (or several, one page each): the timetable to email to students
+export function batchRows(T, batchId) {
+  return T.exams.filter((e) => e.streams.some((b) => b.id === Number(batchId)))
+    .map((e) => [fmtDate(e.date, { weekday: "long", day: "numeric", month: "long" }), e.time, e.module.code, e.module.name,
+      e.halls.map((x) => x.hall.room.name).join(", ") || "—"]);
+}
+export function pdfBatches(T, period, batchIds, filename = "batch-timetables.pdf") {
+  const sections = batchIds.map((id) => {
+    const b = T.batchById[id];
+    return { title: `Exam timetable — Intake ${b.intake} · ${b.stream || b.degree} · Semester ${b.semester}`,
+      subtitle: periodLine(period), head: ["Date", "Time", "Module code", "Module", "Exam hall"], body: batchRows(T, id) };
+  });
+  return downloadPdf({ sections, filename, landscape: false });
+}
+// The batches that sit something in this timetable, newest intake first
+export function timetableBatches(T) {
+  return [...new Map(T.exams.flatMap((e) => e.streams.map((b) => [b.id, b]))).values()]
+    .sort((a, b) => b.intake - a.intake || String(a.stream).localeCompare(String(b.stream)));
+}
+
+// One person's duties: where they must be, when, and with whom
+export function pdfStaff(T, period, staffId, name) {
+  const hs = T.halls.filter((h) => h.duties.some((d) => d.staffId === staffId));
+  return downloadPdf({
+    title: `Exam duties — ${name}`, subtitle: `${periodLine(period)} · ${hs.length} dut${hs.length === 1 ? "y" : "ies"}`,
+    head: ["Date", "Time", "Exam hall", "My role", "Papers", "Batches", "Students", "With"],
+    body: hs.map((h) => [fmtDate(h.date, { weekday: "short", day: "2-digit", month: "short" }), hallTime(h), h.room.name,
+      ROLE_NAMES[h.duties.find((d) => d.staffId === staffId)?.role] || "",
+      h.papers.map((p) => `${p.exam?.module.code} ${p.exam?.module.name}`).join("\n"),
+      [...new Set(h.papers.flatMap((p) => p.exam?.streams.map(batchLabel) || []))].join(", "), String(h.students),
+      h.duties.filter((d) => d.staffId !== staffId).map((d) => `${d.name} (${ROLE_NAMES[d.role]})`).join("\n")]),
+    filename: `exam-duties-${name.replace(/\W+/g, "-").toLowerCase()}.pdf`,
+  });
+}
+
+// Duty list for every staff member (one page each) — handy for the exam office
+export function pdfAllStaff(T, period) {
+  const ids = [...new Set(T.halls.flatMap((h) => h.duties.map((d) => d.staffId)))]
+    .sort((a, b) => T.name(a).localeCompare(T.name(b)));
+  return downloadPdf({
+    sections: ids.map((id) => {
+      const hs = T.halls.filter((h) => h.duties.some((d) => d.staffId === id));
+      return { title: `Exam duties — ${T.name(id)}`, subtitle: `${periodLine(period)} · ${hs.length} dut${hs.length === 1 ? "y" : "ies"}`,
+        head: ["Date", "Time", "Exam hall", "Role", "Papers", "Batches"],
+        body: hs.map((h) => [fmtDate(h.date, { weekday: "short", day: "2-digit", month: "short" }), hallTime(h), h.room.name,
+          ROLE_NAMES[h.duties.find((d) => d.staffId === id)?.role] || "",
+          h.papers.map((p) => p.exam?.module.code).join(", "),
+          [...new Set(h.papers.flatMap((p) => p.exam?.streams.map(batchLabel) || []))].join(", ")]) };
+    }),
+    filename: "staff-duty-lists.pdf",
+  });
 }
 
 // =====================================================================
@@ -188,25 +268,17 @@ export function details(html) {
   return dlg;
 }
 
-// A hall's full picture: papers, staff, seat map
-export function hallDetailsHtml(T, h, { myStaffId = null, highlight = null, examId = null } = {}) {
+// A hall's full picture: papers and staff
+export function hallDetailsHtml(T, h, { myStaffId = null } = {}) {
   const papers = h.papers.map((p) => `<li><b>${esc(p.exam?.module.code)}</b> ${esc(p.exam?.module.name)}
       <span class="muted">· ${p.exam?.streams.map((b) => `Intake ${b.intake} ${esc(b.stream)}`).join(", ")} · ${p.seats} students</span></li>`).join("");
   const staff = ["SUPERVISOR", "INVIGILATOR", "ATTENDANT"].map((r) => h.duties.filter((d) => d.role === r)
     .map((d) => `<li><span class="role">${ROLE_NAMES[r]}</span> ${esc(d.name)}${d.staffId === myStaffId ? ' <span class="badge active">You</span>' : ""}</li>`).join("")).join("");
-  const thisPaper = examId ? h.papers.find((p) => p.examId === examId) : null;
   return `
-    <div class="hall-detail">
-      <div>
-        <p class="muted">${fmtDate(h.date, { weekday: "long", day: "numeric", month: "long", year: "numeric" })} · ${h.session === "AM" ? "Morning" : "Afternoon"}</p>
-        <h3 class="gen-h">Papers in this hall</h3><ul class="plain">${papers}</ul>
-        <h3 class="gen-h">Staff</h3><ul class="plain staff-list">${staff || "<li class='muted'>Not assigned yet.</li>"}</ul>
-        ${thisPaper && !highlight ? `<p class="muted small">Seat numbers are shown once seats are allocated.</p>` : ""}
-      </div>
-      <div class="map-box">
-        ${seatMap(h.room, { used: h.students, highlight })}
-        <p class="legend small"><span class="key on"></span> taken <span class="key"></span> empty ${highlight ? '<span class="key me"></span> your seat' : ""}</p>
-      </div>
+    <div class="hall-detail one">
+      <p class="muted">${fmtDate(h.date, { weekday: "long", day: "numeric", month: "long", year: "numeric" })} · ${h.session === "AM" ? "Morning" : "Afternoon"} · ${h.students} students${h.room.building ? ` · ${esc(h.room.building)}` : ""}</p>
+      <h3 class="gen-h">Papers in this hall</h3><ul class="plain">${papers}</ul>
+      <h3 class="gen-h">Staff</h3><ul class="plain staff-list">${staff || "<li class='muted'>Not assigned yet.</li>"}</ul>
     </div>`;
 }
 

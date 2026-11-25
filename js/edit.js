@@ -12,7 +12,6 @@ import { republish } from "./versions.js";
 import { toast } from "./crud.js";
 import { generate, workingDays, allocate, GRADE_WEIGHT, timeLabel, unavailable } from "./engine.js";
 import { buildInput, saveTimetable, loadAll } from "./generate.js";
-import { seatLabel, perRowOf } from "./viewer.js";
 
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -96,14 +95,13 @@ export function mountEditor({ panel, T, periodId, reload, onSelect }) {
         <div class="ep-block">
           <p class="ep-label">${T.period.status === "published" ? "Published" : T.period.options?.replaces ? "Republish" : "Publish"}</p>
           ${T.period.options?.replaces && T.period.status !== "published"
-            ? `<p class="small muted">Seats are given again, then this copy <b>replaces the published version</b> for lecturers and students. The old version is removed.</p>
-               <button class="btn full" data-act="publish"><i class="ti ti-send"></i> Allocate seats &amp; republish</button>`
+            ? `<p class="small muted">This copy <b>replaces the published version</b> for lecturers. The old version is removed.</p>
+               <button class="btn full" data-act="publish"><i class="ti ti-send"></i> Republish</button>`
           : T.period.status === "published"
-            ? `<p class="small muted">Lecturers and students can see this timetable. Changes you make now are visible to them straight away.</p>
-               <button class="btn light full" data-act="seats"><i class="ti ti-armchair"></i> Re-allocate seats</button>
+            ? `<p class="small muted">Lecturers can see this timetable.</p>
                <button class="btn light full" data-act="unpublish"><i class="ti ti-eye-off"></i> Unpublish</button>`
-            : `<p class="small muted">Publishing allocates seats (index order, repeat students at the back) and shows the timetable to lecturers and students.</p>
-               <button class="btn full" data-act="publish"><i class="ti ti-send"></i> Allocate seats &amp; publish</button>`}
+            : `<p class="small muted">Publishing shows the timetable to lecturers. Download the PDFs (Download menu at the top) to email students.</p>
+               <button class="btn full" data-act="publish"><i class="ti ti-send"></i> Publish</button>`}
         </div>`;
       return;
     }
@@ -252,43 +250,6 @@ export function mountEditor({ panel, T, periodId, reload, onSelect }) {
     if (errs) toast(`Re-planned with ${errs} problem${errs > 1 ? "s" : ""} — see the health check.`, "error");
   }
 
-  // Seats: index-number order, repeat students at the back
-  async function allocateSeats() {
-    const [students, repeats] = await Promise.all([
-      q(supabase.from("students").select("index_no,batch_id,on_hold")),
-      q(supabase.from("repeat_enrolments").select("*")),
-    ]);
-    if (!students.length) return { placed: 0, short: 0, none: true };
-    const ehIds = T.halls.flatMap((h) => h.exams.map((x) => x.id));
-    for (let i = 0; i < ehIds.length; i += 200)
-      await q(supabase.from("seat_allocations").delete().in("exam_hall_id", ehIds.slice(i, i + 200)));
-    // who sits in which hall
-    const hallPeople = new Map();       // hall id -> [{ index_no, repeat, examHallId }]
-    for (const e of T.exams) {
-      const bs = new Set(T.batchesOf[e.moduleId] || []);
-      const proper = students.filter((s) => !s.on_hold && bs.has(s.batch_id)).map((s) => s.index_no).sort();
-      const rep = repeats.filter((r) => r.module_id === e.moduleId).map((r) => r.index_no).sort();
-      const queue = [...proper.map((i) => ({ index_no: i, repeat: false })), ...rep.map((i) => ({ index_no: i, repeat: true }))];
-      for (const h of hallsOf(e.id)) {
-        const part = h.exams.find((x) => x.examId === e.id);
-        const take = queue.splice(0, part.seats).map((p) => ({ ...p, examHallId: part.id }));
-        (hallPeople.get(h.id) || hallPeople.set(h.id, []).get(h.id)).push(...take);
-      }
-    }
-    const rows = [];
-    let short = 0;
-    for (const h of T.halls) {
-      const people = (hallPeople.get(h.id) || []).sort((a, b) => a.repeat - b.repeat || a.index_no.localeCompare(b.index_no));
-      const per = perRowOf(T.roomById[h.roomId] || { exam_capacity: h.cap });
-      people.forEach((p, i) => {
-        if (i >= h.cap) { short++; return; }
-        rows.push({ exam_hall_id: p.examHallId, index_no: p.index_no, seat_label: seatLabel(Math.floor(i / per), i % per), is_repeat: p.repeat });
-      });
-    }
-    for (let i = 0; i < rows.length; i += 500) await q(supabase.from("seat_allocations").insert(rows.slice(i, i + 500)));
-    return { placed: rows.length, short };
-  }
-
   // ----- events -----
   panel.addEventListener("click", async (ev) => {
     const t = ev.target.closest("[data-act],[data-add],[data-remove]");
@@ -311,21 +272,18 @@ export function mountEditor({ panel, T, periodId, reload, onSelect }) {
       const ids = T.halls.map((h) => h.id);
       for (let i = 0; i < ids.length; i += 200) await q(supabase.from("duties").update({ locked: false }).in("hall_session_id", ids.slice(i, i + 200)));
     });
-    if (act === "publish" || act === "seats") {
+    if (act === "publish") {
       const errs = T.checks.filter((c) => c.level === "error").length;
       const again = act === "publish" && T.period.options?.replaces;
       if (act === "publish" && errs && !confirm(`The health check still shows ${errs} problem${errs > 1 ? "s" : ""}. Publish anyway?`)) return;
-      if (again && !confirm("Republish? This version replaces the published one for lecturers and students, and the old version is removed.")) return;
-      return run(again ? "Republished — lecturers and students now see the new version." : act === "publish" ? "Published — lecturers and students can now see it." : "Seats re-allocated.", async () => {
-        const r = await allocateSeats();
-        if (r.none) toast("No students in the system yet, so no seat numbers were given. Halls and times are still published.");
-        else if (r.short) toast(`${r.short} students could not get a seat — check hall capacities.`, "error");
+      if (again && !confirm("Republish? This version replaces the published one for lecturers, and the old version is removed.")) return;
+      return run(again ? "Republished — lecturers now see the new version." : "Published — lecturers can now see it.", async () => {
         if (again) { await republish(T.period); T.period.status = "published"; delete T.period.options.replaces; }
         else if (act === "publish") await q(supabase.from("exam_periods").update({ status: "published" }).eq("id", periodId));
       });
     }
     if (act === "unpublish") {
-      if (!confirm("Unpublish? Lecturers and students will no longer see this timetable.")) return;
+      if (!confirm("Unpublish? Lecturers will no longer see this timetable.")) return;
       return run("Unpublished — it's a draft again.", () => q(supabase.from("exam_periods").update({ status: "draft" }).eq("id", periodId)));
     }
     if (t.dataset.add) {

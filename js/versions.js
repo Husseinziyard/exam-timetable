@@ -84,6 +84,6 @@ export async function deletePeriod(id) {
 // Ask before deleting. Published ones need the word DELETE typed in.
 export function confirmDelete(period) {
   if (period.status !== "published") return confirm(`Delete the draft “${period.name}”? This cannot be undone.`);
-  const typed = prompt(`“${period.name}” is PUBLISHED. Lecturers and students will no longer see it, and all its halls, duties and seats are deleted.\n\nType DELETE to confirm.`);
+  const typed = prompt(`“${period.name}” is PUBLISHED. Lecturers will no longer see it, and all its halls and duties are deleted.\n\nType DELETE to confirm.`);
   return typed?.trim().toUpperCase() === "DELETE";
 }

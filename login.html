@@ -46,11 +46,11 @@
     import { supabase } from "./js/config.js";
     import { getRole, HOME, ALLOWED } from "./js/auth.js";
 
-    // Which door did the user come through? (admin / lecturer / student)
+    // Which door did the user come through? (admin / lecturer)
     const door = new URLSearchParams(location.search).get("role");
-    if (!ALLOWED[door]) location.replace("index.html");
+    if (!ALLOWED[door]) { location.replace("index.html"); await new Promise(() => {}); }   // old or unknown link
 
-    const NAMES = { admin: "Admin", lecturer: "Lecturer", student: "Student" };
+    const NAMES = { admin: "Admin", lecturer: "Lecturer" };
     document.getElementById("box").classList.add(door);
     document.getElementById("title").textContent = `${NAMES[door]} login`;
     document.title = `${NAMES[door]} login — Exam Timetable`;

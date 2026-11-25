@@ -12,7 +12,7 @@ import { mountScale } from "./scale.js";
 import { availabilityMap, preferenceMap } from "./generate.js";
 import { DEFAULT_WEEKLY_LIMITS } from "./engine.js";
 import { workingDays } from "./engine.js";
-import { examLinks } from "./viewer.js";
+import { examLinks, loadPeriod, pdfHalls, pdfBatches, pdfAllStaff, timetableBatches } from "./viewer.js";
 import { findDraftCopy, copyPeriod, deletePeriod, confirmDelete } from "./versions.js";
 
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) =>
@@ -87,7 +87,7 @@ export async function renderOverview(root, go) {
 
   // counts
   const items = [["lecturers", "lecturers", "Staff"], ["rooms", "rooms", "Classes"], ["modules", "modules", "Modules"],
-    ["batches", "batches", "Batches"], ["students", "students", "Students"], ["holidays", "holidays", "Holidays"], ["departments", "departments", "Departments"]];
+    ["batches", "batches", "Batches"], ["holidays", "holidays", "Holidays"], ["departments", "departments", "Departments"]];
   const counts = await Promise.all(items.map(async ([, t]) => {
     const all = await supabase.from(t).select("*", { count: "exact", head: true });
     const held = t === "holidays" ? { count: 0 } : await supabase.from(t).select("*", { count: "exact", head: true }).eq("on_hold", true);
@@ -226,6 +226,7 @@ export async function renderTimetable(root, periodId, go, view = "streams", ui =
           · ${p.status === "published" ? '<span class="badge active">Published</span>' : '<span class="badge draft">Draft</span>'}</p>
       </div>
       <div class="tt-actions">
+        <button class="btn light" id="download"><i class="ti ti-download"></i> Download</button>
         <button class="btn light" id="print"><i class="ti ti-printer"></i> Print</button>
         ${live ? `<button class="btn light" id="edit-copy"><i class="ti ti-pencil"></i> ${pendingCopy ? "Continue editing" : "Edit"}</button>`
           : `<button class="btn light toggle ${ui.edit ? "on" : ""}" id="edit-toggle" aria-pressed="${!!ui.edit}"><i class="ti ti-pencil"></i> Edit</button>`}
@@ -237,7 +238,7 @@ export async function renderTimetable(root, periodId, go, view = "streams", ui =
 
     ${live ? `<div class="version-bar live">
         <i class="ti ti-broadcast"></i>
-        <div class="vb-text"><b>This is the published version.</b> Lecturers and students can see it.
+        <div class="vb-text"><b>This is the published version.</b> Lecturers can see it and download it.
           ${pendingCopy ? "You have a draft copy with changes that are not published yet." : "To change it, click <b>Edit</b>: you work on a copy, and everyone keeps seeing this version until you republish."}</div>
         <div class="vb-actions">
           <button class="btn small" data-vb="copy"><i class="ti ti-pencil"></i> ${pendingCopy ? "Open the draft copy" : "Edit a copy"}</button>
@@ -246,7 +247,7 @@ export async function renderTimetable(root, periodId, go, view = "streams", ui =
         </div>
       </div>` : original ? `<div class="version-bar copy">
         <i class="ti ti-copy"></i>
-        <div class="vb-text"><b>Draft copy of a published timetable.</b> Lecturers and students still see the ${original.status === "published" ? "published" : "old"} version.
+        <div class="vb-text"><b>Draft copy of a published timetable.</b> Lecturers still see the ${original.status === "published" ? "published" : "old"} version.
           Make your changes, then click <b>Republish</b> to replace it.</div>
         <div class="vb-actions">
           <button class="btn small" data-vb="republish"><i class="ti ti-send"></i> Republish…</button>
@@ -303,6 +304,7 @@ export async function renderTimetable(root, periodId, go, view = "streams", ui =
   syncDrawerPosition();
 
   root.querySelector("#print").addEventListener("click", () => window.print());
+  root.querySelector("#download").addEventListener("click", () => downloadDialog(periodId, p));
   const rerender = (extra = {}) => renderTimetable(root, periodId, go, view, { ...ui, keep: true, ...extra });
   root.querySelector("#edit-toggle")?.addEventListener("click", () => rerender({ edit: !ui.edit, sel: null }));
   // published: edit through a draft copy
@@ -322,7 +324,7 @@ export async function renderTimetable(root, periodId, go, view = "streams", ui =
     if (a === "copy") return editCopy(b);
     if (a === "republish") return rerender({ edit: true, sel: null });
     if (a === "unpublish") {
-      if (!confirm("Unpublish? Lecturers and students will no longer see this timetable. It becomes a draft you can edit and publish again.")) return;
+      if (!confirm("Unpublish? Lecturers will no longer see this timetable. It becomes a draft you can edit and publish again.")) return;
       const { error } = await supabase.from("exam_periods").update({ status: "draft" }).eq("id", p.id);
       if (error) return toast(error.message, "error");
       toast("Unpublished — it's a draft again.");
@@ -371,7 +373,7 @@ export async function renderTimetable(root, periodId, go, view = "streams", ui =
   }
   tabs.forEach((t) => t.addEventListener("click", () => show(t.dataset.view)));
 
-  // ----- 1. By stream: rows = streams, columns = exam days (like the student timetable) -----
+  // ----- 1. By stream: rows = streams, columns = exam days -----
   function streamsView() {
     const dates = [...new Set(T.exams.map((e) => e.date))].sort();
     const streamIds = [...new Set(T.exams.flatMap((e) => T.batchesOf[e.moduleId] || []))]
@@ -512,4 +514,49 @@ export async function renderTimetable(root, periodId, go, view = "streams", ui =
   show(view);
   if (ui.sel) markSelected(ui.sel);
   if (ui.keep) root.scrollTop = scrollY;
+}
+
+// =====================================================================
+// DOWNLOADS — PDFs to email to students and staff
+// =====================================================================
+async function downloadDialog(periodId, period) {
+  const V = await loadPeriod(periodId);
+  const batches = timetableBatches(V);
+  const dlg = document.createElement("dialog");
+  dlg.className = "form-dialog";
+  dlg.innerHTML = `<form method="dialog">
+      <h2>Download</h2>
+      <p class="muted">PDF files to email to students and staff.${period.status === "published" ? "" : " <b>This timetable is still a draft.</b>"}</p>
+      <div class="dl-options">
+        <label class="dl-opt"><input type="radio" name="dl" value="batches" checked>
+          <span><b>Every batch's timetable</b><small>One page per batch (${batches.length} batches) — date, time, module and exam hall. Ideal to email to students.</small></span></label>
+        <label class="dl-opt"><input type="radio" name="dl" value="batch">
+          <span><b>One batch</b><small><select id="dl-batch">${batches.map((b) => `<option value="${b.id}">Intake ${b.intake} · ${esc(b.stream || b.degree)}</option>`).join("")}</select></small></span></label>
+        <label class="dl-opt"><input type="radio" name="dl" value="halls">
+          <span><b>Whole timetable — halls and staff</b><small>Every hall session with papers, students, supervisor, invigilators and hall attendant.</small></span></label>
+        <label class="dl-opt"><input type="radio" name="dl" value="staff">
+          <span><b>Staff duty lists</b><small>One page per staff member: where and when they must be.</small></span></label>
+      </div>
+      <div class="dialog-actions"><button type="button" class="btn light" value="cancel">Cancel</button><button class="btn"><i class="ti ti-download"></i> Download PDF</button></div>
+    </form>`;
+  document.body.appendChild(dlg); dlg.showModal();
+  dlg.querySelector('[value="cancel"]').onclick = () => dlg.close();
+  dlg.addEventListener("close", () => dlg.remove());
+  dlg.querySelector("#dl-batch").addEventListener("focus", () => { dlg.querySelector('[value="batch"]').checked = true; });
+  dlg.querySelector("form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const kind = dlg.querySelector('[name="dl"]:checked').value;
+    const btn = dlg.querySelector("button:not([value])");
+    btn.disabled = true; btn.textContent = "Making the PDF…";
+    try {
+      if (kind === "batches") await pdfBatches(V, period, batches.map((b) => b.id), "exam-timetable-all-batches.pdf");
+      if (kind === "batch") {
+        const b = V.batchById[dlg.querySelector("#dl-batch").value];
+        await pdfBatches(V, period, [b.id], `exam-timetable-intake-${b.intake}-${String(b.stream).replace(/\W+/g, "-")}.pdf`);
+      }
+      if (kind === "halls") await pdfHalls(V, period, { title: "Exam timetable — all halls and staff", filename: "exam-timetable-halls-staff.pdf" });
+      if (kind === "staff") await pdfAllStaff(V, period);
+      dlg.close();
+    } catch (err) { toast(err.message || String(err), "error"); btn.disabled = false; btn.textContent = "Download PDF"; }
+  });
 }
