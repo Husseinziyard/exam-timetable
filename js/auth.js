@@ -8,7 +8,7 @@ export const HOME = { admin: "admin.html", lecturer: "lecturer.html", student: "
 export const ALLOWED = {
   admin: ["admin"],
   lecturer: ["lecturer", "admin"],   // an admin is also a lecturer
-  student: ["student"],
+  student: ["student", "admin"],    // an admin can preview the student view
 };
 
 // Ask the database who this user is: 'admin' | 'lecturer' | 'student' | 'none'

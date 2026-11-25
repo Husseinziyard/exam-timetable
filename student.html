@@ -20,6 +20,14 @@
     <div class="topbar-right"><span id="who"></span><button class="btn ghost" id="logout">Log out</button></div>
   </header>
 
+  <div class="preview-bar" id="preview" hidden>
+    <span class="pv-label"><i class="ti ti-eye"></i> Admin preview — you are seeing the student page as</span>
+    <label><span class="sr-only">Batch</span><select id="pv-batch" aria-label="Batch"></select></label>
+    <label><span class="sr-only">Student</span><select id="pv-student" aria-label="Student"></select></label>
+    <label class="pv-check"><input type="checkbox" id="pv-draft"> Include draft timetables</label>
+    <a class="pv-back" href="admin.html"><i class="ti ti-arrow-left"></i> Back to admin</a>
+  </div>
+
   <main class="viewer" id="page" hidden>
     <div class="viewer-head">
       <div>
@@ -48,105 +56,185 @@
       document.getElementById("loading").remove();
       document.getElementById("page").hidden = false;
       const panel = document.getElementById("panel");
+      const isAdmin = me.role === "admin";
+      const batchLabel = (b) => b ? `Intake ${b.intake} · ${b.stream || b.degree} · Semester ${b.semester}` : "";
 
-      // who am I?
-      const { data: stu } = await supabase.from("students").select("*").eq("email", me.user.email.toLowerCase()).maybeSingle();
-      const { data: repeats } = stu ? await supabase.from("repeat_enrolments").select("module_id").eq("index_no", stu.index_no) : { data: [] };
-      const repeatIds = new Set((repeats || []).map((r) => r.module_id));
-      let batch = null;
-      if (stu) ({ data: batch } = await supabase.from("batches").select("*").eq("id", stu.batch_id).maybeSingle());
-      const batchName = batch ? `Intake ${batch.intake} · ${batch.stream || batch.degree} · Semester ${batch.semester}` : "";
-      document.getElementById("sub").textContent = stu ? `${stu.full_name} · ${stu.index_no}${batchName ? " · " + batchName : ""}` : "";
+      let stu = null, batch = null, repeatIds = new Set(), periods = [], T = null, mine = [], seats = {};
 
-      const periods = await publishedPeriods().catch(() => []);
-      if (!stu) {
-        panel.innerHTML = `<div class="empty table-wrap"><p><strong>We couldn't find your student record.</strong></p>
-          <p class="muted">Ask the faculty office to add <b>${esc(me.user.email)}</b> to your record.</p></div>`;
-        document.querySelector(".period-pick").hidden = true;
-      } else if (!periods.length) {
-        document.querySelector(".period-pick").hidden = true;
-        panel.innerHTML = `<div class="empty table-wrap"><p><strong>Your exam timetable isn't published yet.</strong></p>
-          <p class="muted">It will appear here as soon as the faculty publishes it.</p></div>`;
-      } else {
-        let T = null, mine = [], seats = {};
-
-        async function openPeriod(id) {
-          panel.innerHTML = `<p class="loading">Loading…</p>`;
-          T = await loadPeriod(id);
-          // my papers: my batch's papers + any I'm repeating
-          mine = T.exams.filter((e) => e.streams.some((b) => b.id === stu.batch_id) || repeatIds.has(e.module.id));
-          // my seats (only once the faculty has allocated seats)
-          const ehIds = mine.flatMap((e) => e.halls.flatMap((x) => x.hall.papers.filter((p) => p.examId === e.id).map((p) => p.examHallId)));
-          seats = {};
-          if (ehIds.length) {
-            const { data } = await supabase.from("seat_allocations").select("*").eq("index_no", stu.index_no).in("exam_hall_id", ehIds);
-            (data || []).forEach((s) => { seats[s.exam_hall_id] = s.seat_label; });
-          }
-          draw();
-        }
-        // which hall + seat for one of my papers
-        function whereAmI(e) {
-          for (const x of e.halls) {
-            const p = x.hall.papers.find((pp) => pp.examId === e.id);
-            if (p && seats[p.examHallId]) return { hall: x.hall, seat: seats[p.examHallId] };
-          }
-          return e.halls.length === 1 ? { hall: e.halls[0].hall, seat: null } : { hall: null, seat: null };
-        }
-        const hallText = (e) => { const w = whereAmI(e); return w.hall ? w.hall.room.name : e.halls.map((x) => x.hall.room.name).join(" / ") || "—"; };
-        const supervisors = (e) => [...new Set(e.halls.flatMap((x) => x.hall.duties.filter((d) => d.role === "SUPERVISOR").map((d) => d.name)))];
-
-        function draw() {
-          const today = todayIso();
-          const next = mine.find((e) => e.date >= today);
-          document.getElementById("next").innerHTML = next ? `<div class="next-strip">
-              <i class="ti ti-calendar-event"></i>
-              <div><span class="tag">NEXT EXAM</span>
-                <p><b>${esc(next.module.code)} ${esc(next.module.name)}</b></p>
-                <p>${fmtDate(next.date, { weekday: "long", day: "numeric", month: "long" })} · ${next.time} · ${esc(hallText(next))}
-                ${whereAmI(next).seat ? ` · seat <b>${esc(whereAmI(next).seat)}</b>` : ""}</p></div>
-            </div>` : "";
-          document.getElementById("pdf").hidden = !mine.length;
-          document.getElementById("hint").hidden = !mine.length;
-          panel.innerHTML = `<div class="table-wrap"><table class="data">
-            <thead><tr><th>Date</th><th>Module</th><th>Exam hall</th><th>Time</th><th>Supervisor</th></tr></thead>
-            <tbody>${mine.map((e) => {
-              const w = whereAmI(e);
-              return `<tr data-exam="${e.id}" tabindex="0" class="${e.date < today ? "past" : ""}" title="Click to see the hall and your seat">
-                <td><b>${fmtDate(e.date, { weekday: "short", day: "2-digit", month: "short" })}</b></td>
-                <td><b>${esc(e.module.code)}</b> ${esc(e.module.name)}${repeatIds.has(e.module.id) ? ' <span class="badge hold">Repeat</span>' : ""}</td>
-                <td>${esc(hallText(e))}${w.seat ? ` <span class="muted small">· seat ${esc(w.seat)}</span>` : ""}</td>
-                <td>${e.time}</td>
-                <td class="small">${supervisors(e).map(esc).join("<br>") || "—"}</td></tr>`;
-            }).join("") || `<tr><td colspan="5" class="muted center">You have no exams in this timetable.</td></tr>`}</tbody></table></div>`;
-        }
-
-        panel.addEventListener("click", (ev) => {
-          const row = ev.target.closest("[data-exam]");
-          if (!row) return;
-          const e = T.examById[Number(row.dataset.exam)];
-          const w = whereAmI(e);
-          const halls = w.hall ? [w.hall] : e.halls.map((x) => x.hall);
-          details(`<h2>${esc(e.module.code)} · ${esc(e.module.name)}</h2>
-            <p class="muted">${fmtDate(e.date, { weekday: "long", day: "numeric", month: "long", year: "numeric" })} · ${e.time}</p>
-            ${w.seat ? `<p class="seat-callout">Your seat: <b>${esc(w.seat)}</b> in <b>${esc(w.hall.room.name)}</b></p>`
-              : halls.length > 1 ? `<p class="seat-callout muted">This exam uses ${halls.length} halls. Your hall and seat will be shown once seats are allocated.</p>`
-              : `<p class="seat-callout muted">Your seat number will be shown once seats are allocated.</p>`}
-            ${halls.map((h) => `<h3 class="gen-h">${esc(h.room.name)}</h3>${hallDetailsHtml(T, h, { highlight: w.hall === h ? w.seat : null })}`).join("")}`);
-        });
-        panel.addEventListener("keydown", (ev) => { if (ev.key === "Enter" && ev.target.matches("[data-exam]")) ev.target.click(); });
-
-        document.getElementById("pdf").addEventListener("click", () => downloadPdf({
-          title: `Exam timetable — ${batchName}`,
-          subtitle: `${stu.full_name} · ${stu.index_no} · ${document.querySelector("#period option:checked")?.textContent || ""}`,
-          landscape: false,
-          head: ["Date", "Module code", "Module", "Exam hall", "Seat", "Time"],
-          body: mine.map((e) => { const w = whereAmI(e); return [fmtDate(e.date), e.module.code, e.module.name, hallText(e), w.seat || "", e.time]; }),
-          filename: `exam-timetable-${stu.index_no.replace(/\W+/g, "-")}.pdf`,
-        }));
-
-        const first = periodPicker(document.getElementById("period"), periods, openPeriod);
-        openPeriod(first);
+      // ---------- who am I? ----------
+      async function loadMe() {
+        const { data } = await supabase.from("students").select("*").eq("email", me.user.email.toLowerCase()).maybeSingle();
+        stu = data;
+        batch = null;
+        if (stu) ({ data: batch } = await supabase.from("batches").select("*").eq("id", stu.batch_id).maybeSingle());
       }
+
+      // ---------- admin preview: pick a batch / student ----------
+      const PV_KEY = "studentPreview";
+      let pv = {};
+      try { pv = JSON.parse(localStorage.getItem(PV_KEY) || "{}"); } catch {}
+      let allBatches = [];
+      async function setupPreview() {
+        document.getElementById("preview").hidden = false;
+        document.body.classList.add("previewing");
+        const { data } = await supabase.from("batches").select("*").order("intake", { ascending: false }).order("stream");
+        allBatches = data || [];
+        const bSel = document.getElementById("pv-batch");
+        bSel.innerHTML = allBatches.map((b) => `<option value="${b.id}">${esc(batchLabel(b))}</option>`).join("")
+          || `<option value="">No batches yet — add them in the admin page</option>`;
+        if (allBatches.some((b) => String(b.id) === String(pv.batch))) bSel.value = pv.batch;
+        document.getElementById("pv-draft").checked = pv.draft !== false;
+        bSel.addEventListener("change", async () => { pv = { ...pv, batch: bSel.value, student: "" }; await fillStudents(); refresh(); });
+        document.getElementById("pv-student").addEventListener("change", (e) => { pv.student = e.target.value; refresh(); });
+        document.getElementById("pv-draft").addEventListener("change", (e) => { pv.draft = e.target.checked; refresh(true); });
+        await fillStudents();
+      }
+      async function fillStudents() {
+        const sSel = document.getElementById("pv-student");
+        const bid = document.getElementById("pv-batch").value;
+        const { data } = bid ? await supabase.from("students").select("*").eq("batch_id", bid).order("index_no") : { data: [] };
+        sSel.innerHTML = `<option value="">Any student in this batch</option>` +
+          (data || []).map((x) => `<option value="${esc(x.index_no)}">${esc(x.index_no)} · ${esc(x.full_name)}</option>`).join("");
+        if ((data || []).some((x) => x.index_no === pv.student)) sSel.value = pv.student;
+        sSel.disabled = !(data || []).length;
+        sSel.title = (data || []).length ? "" : "No students added to this batch yet";
+      }
+      async function previewStudent() {
+        const bid = document.getElementById("pv-batch").value;
+        batch = allBatches.find((b) => String(b.id) === String(bid)) || null;
+        const idx = document.getElementById("pv-student").value;
+        if (idx) {
+          ({ data: stu } = await supabase.from("students").select("*").eq("index_no", idx).maybeSingle());
+        } else {
+          stu = batch ? { full_name: "Sample student", index_no: "", batch_id: batch.id, sample: true } : null;
+        }
+      }
+
+      // ---------- draw ----------
+      async function refresh(reloadPeriods = false) {
+        if (isAdmin) {
+          try { localStorage.setItem(PV_KEY, JSON.stringify({ ...pv, batch: document.getElementById("pv-batch").value })); } catch {}
+          await previewStudent();
+        }
+        repeatIds = new Set();
+        if (stu?.index_no) {
+          const { data: repeats } = await supabase.from("repeat_enrolments").select("module_id").eq("index_no", stu.index_no);
+          repeatIds = new Set((repeats || []).map((r) => r.module_id));
+        }
+        const batchName = batchLabel(batch);
+        document.getElementById("sub").textContent = stu
+          ? [stu.sample ? "Any student" : stu.full_name, stu.index_no, batchName].filter(Boolean).join(" · ") : "";
+
+        if (reloadPeriods || !periods.length) {
+          periods = isAdmin && pv.draft !== false
+            ? await supabase.from("exam_periods").select("*").order("start_date", { ascending: false }).then((r) => r.data || [])
+            : await publishedPeriods().catch(() => []);
+        }
+        const pick = document.querySelector(".period-pick");
+        document.getElementById("next").innerHTML = "";
+        document.getElementById("pdf").hidden = true;
+        document.getElementById("hint").hidden = true;
+        if (!stu) {
+          pick.hidden = true;
+          panel.innerHTML = isAdmin
+            ? `<div class="empty table-wrap"><p><strong>Pick a batch above to preview.</strong></p></div>`
+            : `<div class="empty table-wrap"><p><strong>We couldn't find your student record.</strong></p>
+               <p class="muted">Ask the faculty office to add <b>${esc(me.user.email)}</b> to your record.</p></div>`;
+          return;
+        }
+        if (!periods.length) {
+          pick.hidden = true;
+          panel.innerHTML = `<div class="empty table-wrap"><p><strong>Your exam timetable isn't published yet.</strong></p>
+            <p class="muted">${isAdmin ? "Tick “Include draft timetables” above to preview a draft." : "It will appear here as soon as the faculty publishes it."}</p></div>`;
+          return;
+        }
+        pick.hidden = false;
+        const sel = document.getElementById("period");
+        const keep = sel.value;
+        sel.replaceWith(sel.cloneNode(false));          // drop old listeners
+        const named = periods.map((p) => p.status === "published" ? p : { ...p, name: `${p.name} (draft)` });
+        const first = periodPicker(document.getElementById("period"), named, openPeriod);
+        const want = named.some((p) => String(p.id) === keep) ? keep : first;
+        document.getElementById("period").value = want;
+        await openPeriod(want);
+      }
+
+      async function openPeriod(id) {
+        panel.innerHTML = `<p class="loading">Loading…</p>`;
+        T = await loadPeriod(id);
+        // my papers: my batch's papers + any I'm repeating
+        mine = T.exams.filter((e) => e.streams.some((b) => b.id === stu.batch_id) || repeatIds.has(e.module.id));
+        // my seats (only once the faculty has allocated seats)
+        const ehIds = mine.flatMap((e) => e.halls.flatMap((x) => x.hall.papers.filter((p) => p.examId === e.id).map((p) => p.examHallId)));
+        seats = {};
+        if (ehIds.length && stu.index_no) {
+          const { data } = await supabase.from("seat_allocations").select("*").eq("index_no", stu.index_no).in("exam_hall_id", ehIds);
+          (data || []).forEach((s) => { seats[s.exam_hall_id] = s.seat_label; });
+        }
+        draw();
+      }
+      // which hall + seat for one of my papers
+      function whereAmI(e) {
+        for (const x of e.halls) {
+          const p = x.hall.papers.find((pp) => pp.examId === e.id);
+          if (p && seats[p.examHallId]) return { hall: x.hall, seat: seats[p.examHallId] };
+        }
+        return e.halls.length === 1 ? { hall: e.halls[0].hall, seat: null } : { hall: null, seat: null };
+      }
+      const hallText = (e) => { const w = whereAmI(e); return w.hall ? w.hall.room.name : e.halls.map((x) => x.hall.room.name).join(" / ") || "—"; };
+      const supervisors = (e) => [...new Set(e.halls.flatMap((x) => x.hall.duties.filter((d) => d.role === "SUPERVISOR").map((d) => d.name)))];
+
+      function draw() {
+        const today = todayIso();
+        const next = mine.find((e) => e.date >= today);
+        document.getElementById("next").innerHTML = next ? `<div class="next-strip">
+            <i class="ti ti-calendar-event"></i>
+            <div><span class="tag">NEXT EXAM</span>
+              <p><b>${esc(next.module.code)} ${esc(next.module.name)}</b></p>
+              <p>${fmtDate(next.date, { weekday: "long", day: "numeric", month: "long" })} · ${next.time} · ${esc(hallText(next))}
+              ${whereAmI(next).seat ? ` · seat <b>${esc(whereAmI(next).seat)}</b>` : ""}</p></div>
+          </div>` : "";
+        document.getElementById("pdf").hidden = !mine.length;
+        document.getElementById("hint").hidden = !mine.length;
+        panel.innerHTML = `<div class="table-wrap"><table class="data">
+          <thead><tr><th>Date</th><th>Module</th><th>Exam hall</th><th>Time</th><th>Supervisor</th></tr></thead>
+          <tbody>${mine.map((e) => {
+            const w = whereAmI(e);
+            return `<tr data-exam="${e.id}" tabindex="0" class="${e.date < today ? "past" : ""}" title="Click to see the hall and your seat">
+              <td><b>${fmtDate(e.date, { weekday: "short", day: "2-digit", month: "short" })}</b></td>
+              <td><b>${esc(e.module.code)}</b> ${esc(e.module.name)}${repeatIds.has(e.module.id) ? ' <span class="badge hold">Repeat</span>' : ""}</td>
+              <td>${esc(hallText(e))}${w.seat ? ` <span class="muted small">· seat ${esc(w.seat)}</span>` : ""}</td>
+              <td>${e.time}</td>
+              <td class="small">${supervisors(e).map(esc).join("<br>") || "—"}</td></tr>`;
+          }).join("") || `<tr><td colspan="5" class="muted center">You have no exams in this timetable.</td></tr>`}</tbody></table></div>`;
+      }
+
+      panel.addEventListener("click", (ev) => {
+        const row = ev.target.closest("[data-exam]");
+        if (!row) return;
+        const e = T.examById[Number(row.dataset.exam)];
+        const w = whereAmI(e);
+        const halls = w.hall ? [w.hall] : e.halls.map((x) => x.hall);
+        details(`<h2>${esc(e.module.code)} · ${esc(e.module.name)}</h2>
+          <p class="muted">${fmtDate(e.date, { weekday: "long", day: "numeric", month: "long", year: "numeric" })} · ${e.time}</p>
+          ${w.seat ? `<p class="seat-callout">Your seat: <b>${esc(w.seat)}</b> in <b>${esc(w.hall.room.name)}</b></p>`
+            : halls.length > 1 ? `<p class="seat-callout muted">This exam uses ${halls.length} halls. Your hall and seat will be shown once seats are allocated.</p>`
+            : `<p class="seat-callout muted">Your seat number will be shown once seats are allocated.</p>`}
+          ${halls.map((h) => `<h3 class="gen-h">${esc(h.room.name)}</h3>${hallDetailsHtml(T, h, { highlight: w.hall === h ? w.seat : null })}`).join("")}`);
+      });
+      panel.addEventListener("keydown", (ev) => { if (ev.key === "Enter" && ev.target.matches("[data-exam]")) ev.target.click(); });
+
+      document.getElementById("pdf").addEventListener("click", () => downloadPdf({
+        title: `Exam timetable — ${batchLabel(batch)}`,
+        subtitle: [stu.sample ? "" : stu.full_name, stu.index_no, document.querySelector("#period option:checked")?.textContent || ""].filter(Boolean).join(" · "),
+        landscape: false,
+        head: ["Date", "Module code", "Module", "Exam hall", "Seat", "Time"],
+        body: mine.map((e) => { const w = whereAmI(e); return [fmtDate(e.date), e.module.code, e.module.name, hallText(e), w.seat || "", e.time]; }),
+        filename: `exam-timetable-${(stu.index_no || batchLabel(batch)).replace(/\W+/g, "-")}.pdf`,
+      }));
+
+      if (isAdmin) await setupPreview(); else await loadMe();
+      await refresh(true);
     }
   </script>
 </body>

@@ -87,3 +87,16 @@ tr.past td { color: var(--muted); }
 .dot-badge { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--orange); color: #fff; font-size: 12px; font-weight: 700; }
 .av-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
 .av-head h2 { font-size: 24px; margin-bottom: 4px; }
+
+/* ----- Admin preview bar on the student page ----- */
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.preview-bar { position: sticky; top: 0; z-index: 20; display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center;
+  padding: 12px 24px; background: #fff4e6; border-bottom: 2px solid #f0a868; font-size: 14px; }
+.preview-bar[hidden] { display: none; }
+.preview-bar .pv-label { font-weight: 600; color: #7a3b06; display: flex; gap: 6px; align-items: center; }
+.preview-bar label { margin: 0; font-weight: 500; }
+.preview-bar select { width: auto; min-width: 220px; padding: 7px 10px; }
+.preview-bar .pv-check { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+.preview-bar .pv-check input { width: auto; }
+.preview-bar .pv-back { margin-left: auto; display: flex; gap: 4px; align-items: center; font-weight: 600; }
+@media (max-width: 700px) { .preview-bar select { min-width: 0; width: 100%; } .preview-bar label { width: 100%; } .preview-bar .pv-back { margin-left: 0; } }
