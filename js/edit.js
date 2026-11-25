@@ -81,7 +81,6 @@ export function mountEditor({ panel, T, periodId, reload, onSelect }) {
   function draw() {
     if (!sel) {
       panel.innerHTML = `
-        <div class="ep-head"><h3>Edit timetable</h3></div>
         <p class="muted small">Click a <b>paper</b> (By stream) or a <b>hall</b> (Halls &amp; staff) to change it.
           Everything you change is <b>locked</b>, so re-planning keeps it.</p>
         <div class="ep-block">
@@ -121,11 +120,18 @@ export function mountEditor({ panel, T, periodId, reload, onSelect }) {
       <p class="small"><b>Now:</b> ${fmt(e.date, { weekday: "long", day: "numeric", month: "long" })} · ${timeLabel(e.session, m.duration_hours)}
         <br><b>Halls:</b> ${hallsOf(e.id).map((h) => esc(h.roomName)).join(", ") || "none"}</p>
       <div class="ep-block">
-        <label class="ep-label" for="ep-slot">Move to</label>
-        <select id="ep-slot" size="8" class="slot-list">${options.map((o) =>
-          `<option value="${o.d}|${o.s}" class="${o.cls}" ${o.cls === "cur" ? "selected" : ""} ${o.cls === "bad" ? "disabled" : ""}>
-            ${fmt(o.d)} ${o.s === "AM" ? "morning" : "afternoon"} — ${o.note}</option>`).join("")}</select>
-        <p class="small muted">Greyed-out options would break a rule. Halls and staff for the paper are re-assigned automatically.</p>
+        <p class="ep-label" id="ep-slot-label">Move to</p>
+        <div class="slot-filter" role="radiogroup" aria-label="Show">
+          <label><input type="radio" name="slot-show" value="ok" checked> Free only</label>
+          <label><input type="radio" name="slot-show" value="all"> All days</label>
+        </div>
+        <div class="slot-cards" role="radiogroup" aria-labelledby="ep-slot-label">${options.map((o) => `
+          <label class="slot-card ${o.cls}" ${o.cls === "bad" ? 'data-hide="1"' : ""}>
+            <input type="radio" name="ep-slot" value="${o.d}|${o.s}" ${o.cls === "cur" ? "checked" : ""} ${o.cls === "bad" || o.cls === "cur" ? "disabled" : ""}>
+            <span class="slot-when"><b>${fmt(o.d)}</b> ${o.s === "AM" ? "Morning" : "Afternoon"}</span>
+            <span class="slot-note">${o.cls === "ok" ? '<i class="ti ti-circle-check"></i>' : o.cls === "warn" ? '<i class="ti ti-alert-circle"></i>' : o.cls === "cur" ? '<i class="ti ti-map-pin"></i>' : '<i class="ti ti-ban"></i>'} ${o.cls === "cur" ? "Current" : o.note.charAt(0).toUpperCase() + o.note.slice(1)}</span>
+          </label>`).join("")}</div>
+        <p class="small muted">Halls and staff for the paper are found again automatically after moving.</p>
         <button class="btn full" data-act="move">Move paper</button>
       </div>
       <div class="ep-block">
@@ -284,7 +290,7 @@ export function mountEditor({ panel, T, periodId, reload, onSelect }) {
     const act = t.dataset.act;
     if (act === "back") { sel = null; onSelect(null); return draw(); }
     if (act === "move") {
-      const v = panel.querySelector("#ep-slot").value;
+      const v = panel.querySelector('[name="ep-slot"]:checked')?.value;
       const e = examOf(sel.id);
       if (!v || v === `${e.date}|${e.session}`) return toast("Pick a different day or session first.", "error");
       const [d, s] = v.split("|");
@@ -324,6 +330,8 @@ export function mountEditor({ panel, T, periodId, reload, onSelect }) {
   });
   panel.addEventListener("change", async (ev) => {
     const t = ev.target;
+    if (t.name === "slot-show") { panel.querySelector(".slot-cards").classList.toggle("show-all", t.value === "all"); return; }
+    if (t.name === "ep-slot") return;
     if (t.matches("[data-act=lock-exam]")) return run(t.checked ? "Paper locked." : "Paper unlocked.", () =>
       q(supabase.from("exams").update({ locked: t.checked }).eq("id", sel.id)));
     if (t.dataset.lockDuty) return run(t.checked ? "Duty locked." : "Duty unlocked.", () =>

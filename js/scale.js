@@ -20,6 +20,7 @@ export function mountScale({ panel, T, ui, onWeek }) {
   if (!weeks.length) { panel.innerHTML = `<p class="muted small">No exam days in this period.</p>`; return; }
   let wi = Math.max(0, weeks.indexOf(ui.week));
   let showAll = false;
+  ui.scaleOpen ||= {};            // which grade dropdowns are open (remembered while you work)
 
   function draw() {
     const wk = weeks[wi];
@@ -51,15 +52,24 @@ export function mountScale({ panel, T, ui, onWeek }) {
       const busy = list.filter((x) => x.n > 0);
       const shown = showAll ? list : busy;
       const cap = list[0].s.cap;
-      return `<section class="sc-group">
-        <p class="sc-head"><b>${label}</b><span>limit ${cap} / week</span></p>
+      const nOver = list.filter((x) => x.n > x.s.cap).length;
+      // open by default only if someone in this grade is over the limit
+      const open = ui.scaleOpen[g] ?? nOver > 0;
+      return `<details class="sc-group ${nOver ? "has-over" : ""}" data-g="${g}" ${open ? "open" : ""}>
+        <summary class="sc-head">
+          <i class="ti ti-chevron-right sc-chev" aria-hidden="true"></i>
+          <span class="sc-title"><b>${label}</b>
+            <span class="sc-meta">${busy.length} of ${list.length} on duty · limit ${cap} a week</span></span>
+          ${nOver ? `<span class="sc-pill bad">${nOver} over</span>` : `<span class="sc-pill ok">OK</span>`}
+        </summary>
+        <div class="sc-days" aria-hidden="true"><span></span>${["Mon", "Tue", "Wed", "Thu", "Fri"].map((d) => `<span>${d}</span>`).join("")}</div>
         ${shown.map(({ s, n }) => `<div class="sc-row ${n > s.cap ? "is-over" : ""}">
           <span class="sc-name" title="${esc(s.name)}">${esc(s.name)}</span>
-          <span class="sc-n">${n}/${s.cap}</span>
+          <span class="sc-n">${n} / ${s.cap}</span>
           ${bar(s)}
-        </div>`).join("") || `<p class="muted small">Nobody on duty this week.</p>`}
-        ${!showAll && list.length > busy.length ? `<p class="muted small">+ ${list.length - busy.length} with no duties this week</p>` : ""}
-      </section>`;
+        </div>`).join("") || `<p class="muted small">Nobody in this grade is on duty this week.</p>`}
+        ${!showAll && list.length > busy.length ? `<p class="muted small">+ ${list.length - busy.length} with no duties this week (tick “Show people with no duties” to see them)</p>` : ""}
+      </details>`;
     }).join("");
 
     panel.innerHTML = `
@@ -74,11 +84,18 @@ export function mountScale({ panel, T, ui, onWeek }) {
       </p>
       <p class="sc-legend small"><span class="sc-cell on"></span> on duty <span class="sc-cell over on"></span> over limit
         <span class="sc-cell off"></span> can't come <span class="sc-cell beyond"></span> above limit</p>
-      <label class="check small"><input type="checkbox" data-all ${showAll ? "checked" : ""}> Show people with no duties</label>
+      <div class="sc-tools">
+        <label class="check small"><input type="checkbox" data-all ${showAll ? "checked" : ""}> Show people with no duties</label>
+        <span><button class="link" data-expand="1">Open all</button> · <button class="link" data-expand="0">Close all</button></span>
+      </div>
       ${groups}`;
   }
 
+  // remember which dropdowns are open
+  panel.addEventListener("toggle", (e) => { if (e.target.matches("details[data-g]")) ui.scaleOpen[e.target.dataset.g] = e.target.open; }, true);
   panel.addEventListener("click", (e) => {
+    const x = e.target.closest("[data-expand]");
+    if (x) { panel.querySelectorAll("details[data-g]").forEach((d) => { d.open = x.dataset.expand === "1"; ui.scaleOpen[d.dataset.g] = d.open; }); return; }
     const b = e.target.closest("[data-w]");
     if (!b) return;
     wi = Math.min(weeks.length - 1, Math.max(0, wi + Number(b.dataset.w)));

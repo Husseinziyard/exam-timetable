@@ -94,6 +94,24 @@ export async function renderOverview(root, go) {
   root.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => go(b.dataset.go)));
 }
 
+// Sidebars sit just below the top bar and just right of the menu, whatever their sizes
+let observing = false;
+function syncDrawerPosition() {
+  const set = () => {
+    const top = document.querySelector(".topbar")?.offsetHeight || 72;
+    const side = document.querySelector(".sidebar")?.offsetWidth || 0;
+    document.documentElement.style.setProperty("--top", `${top}px`);
+    document.documentElement.style.setProperty("--side-w", `${side}px`);
+  };
+  set();
+  if (!observing && window.ResizeObserver) {
+    observing = true;
+    const ro = new ResizeObserver(set);
+    document.querySelectorAll(".topbar, .sidebar").forEach((el) => ro.observe(el));
+    window.addEventListener("resize", set);
+  }
+}
+
 // =====================================================================
 // LOAD one timetable with everything needed to show it
 // =====================================================================
@@ -213,26 +231,41 @@ export async function renderTimetable(root, periodId, go, view = "streams", ui =
       <ul class="health-list">${checks.map((c) => `<li class="${c.level}">${esc(c.text)}</li>`).join("") || "<li class='info'>No issues found.</li>"}</ul>
     </details>
 
-    <div class="tt-layout ${ui.edit ? "with-edit" : ""} ${right ? "with-ai" : ""}">
-      <aside class="edit-panel" id="edit-panel" aria-label="Edit timetable" ${ui.edit ? "" : "hidden"}></aside>
-      <div class="tt-main">
-        <div class="tabs tt-tabs" role="tablist">
-          <button role="tab" data-view="streams">By stream</button>
-          <button role="tab" data-view="halls">Halls &amp; staff</button>
-          <button role="tab" data-view="load">Staff load</button>
-        </div>
-        ${ui.edit ? '<p class="edit-hint"><i class="ti ti-pointer"></i> Edit mode: click a paper or a hall to change it.</p>' : ""}
-        <div class="tt-body"></div>
+    <div class="tt-main">
+      <div class="tabs tt-tabs" role="tablist">
+        <button role="tab" data-view="streams">By stream</button>
+        <button role="tab" data-view="halls">Halls &amp; staff</button>
+        <button role="tab" data-view="load">Staff load</button>
       </div>
-      <aside class="ai-panel right-panel" id="right-panel" aria-label="${right === "ai" ? "AI assistant" : "Load scale"}" ${right ? "" : "hidden"}>
-        <div class="tabs side-tabs" role="tablist">
-          <button role="tab" data-right="scale" class="${right === "scale" ? "active" : ""}"><i class="ti ti-chart-bar"></i> Load scale</button>
-          <button role="tab" data-right="ai" class="${right === "ai" ? "active" : ""}"><i class="ti ti-sparkles"></i> AI</button>
-          <button class="side-close" data-right="" aria-label="Close side panel"><i class="ti ti-x"></i></button>
+      ${ui.edit ? '<p class="edit-hint"><i class="ti ti-pointer"></i> Edit mode: click a paper or a hall to change it in the panel on the left.</p>' : ""}
+      <div class="tt-body"></div>
+    </div>
+
+    <!-- LEFT SIDEBAR: Edit -->
+    <aside class="drawer drawer-left" aria-label="Edit timetable" ${ui.edit ? "" : "hidden"}>
+      <header class="drawer-head">
+        <h2><i class="ti ti-pencil"></i> Edit timetable</h2>
+        <button class="drawer-close" data-close-edit aria-label="Close the edit panel"><i class="ti ti-x"></i></button>
+      </header>
+      <div class="drawer-body" id="edit-panel"></div>
+    </aside>
+
+    <!-- RIGHT SIDEBAR: Load scale / AI assistant -->
+    <aside class="drawer drawer-right" aria-label="${right === "ai" ? "AI assistant" : "Load scale"}" ${right ? "" : "hidden"}>
+      <header class="drawer-head">
+        <div class="drawer-tabs" role="tablist">
+          <button role="tab" data-right="scale" class="${right === "scale" ? "active" : ""}" aria-selected="${right === "scale"}"><i class="ti ti-chart-bar"></i> Load scale</button>
+          <button role="tab" data-right="ai" class="${right === "ai" ? "active" : ""}" aria-selected="${right === "ai"}"><i class="ti ti-sparkles"></i> AI assistant</button>
         </div>
-        <div id="right-body" class="right-body"></div>
-      </aside>
-    </div>`;
+        <button class="drawer-close" data-right="" aria-label="Close the side panel"><i class="ti ti-x"></i></button>
+      </header>
+      <div class="drawer-body" id="right-body"></div>
+    </aside>`;
+
+  // the timetable makes room for whichever sidebars are open
+  root.classList.toggle("drawer-left-open", !!ui.edit);
+  root.classList.toggle("drawer-right-open", !!right);
+  syncDrawerPosition();
 
   root.querySelector("#print").addEventListener("click", () => window.print());
   const rerender = (extra = {}) => renderTimetable(root, periodId, go, view, { ...ui, keep: true, ...extra });
@@ -240,6 +273,7 @@ export async function renderTimetable(root, periodId, go, view = "streams", ui =
   root.querySelector("#ai-toggle").addEventListener("click", () => rerender({ right: right === "ai" ? null : "ai" }));
   root.querySelector("#scale-toggle").addEventListener("click", () => rerender({ right: right === "scale" ? null : "scale" }));
   root.querySelectorAll("[data-right]").forEach((b) => b.addEventListener("click", () => rerender({ right: b.dataset.right || null })));
+  root.querySelector("[data-close-edit]").addEventListener("click", () => rerender({ edit: false, sel: null }));
   root.querySelector("#publish").addEventListener("click", () => rerender({ edit: true, sel: null }));
 
   // the Edit panel (its tools are also used by the AI assistant)

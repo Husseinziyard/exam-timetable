@@ -85,6 +85,7 @@
       async function route() {
         const key = location.hash.slice(1) || "overview";
         app.classList.remove("open");
+        content.classList.remove("drawer-left-open", "drawer-right-open");   // timetable sidebars belong to the timetable page only
         const go = (k) => (location.hash = k);
         const navKey = key.startsWith("timetable/") ? "overview" : key.split("/")[0];
         nav.querySelectorAll("[data-key]").forEach((a) => a.classList.toggle("active", a.dataset.key === navKey));

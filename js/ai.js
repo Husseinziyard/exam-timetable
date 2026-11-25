@@ -128,8 +128,7 @@ export function mountAI({ panel, T, periodId, editor, refresh }) {
       </div>`;
     }).join("");
     panel.innerHTML = `
-      <div class="ep-head"><h3><i class="ti ti-sparkles"></i> AI assistant</h3>
-        ${chat.messages.length ? '<button class="link" data-clear>New chat</button>' : ""}</div>
+      ${chat.messages.length ? '<div class="ai-top"><button class="link" data-clear><i class="ti ti-plus"></i> New chat</button></div>' : ""}
       ${chat.messages.length ? "" : `<p class="small">Ask in plain words. The assistant suggests changes; each one is checked against the faculty's rules, and nothing changes until you click <b>Apply</b>.</p>
         <div class="ai-examples">${[
           "Dr. Perera is on leave on 18 November. Replace all her duties.",
