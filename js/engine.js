@@ -216,11 +216,11 @@ export function allocate(units, batches, rooms, sched) {
   }
   for (const [si, list] of bySlot) {
     const { date, session } = sched.slots[si];
-    const state = rooms.map((r) => ({ ...r, used: 0, intakes: new Set(), key: `${date}|${session}|${r.id}` }));
+    const state = rooms.map((r) => ({ ...r, used: 0, intakes: new Set(), mods: new Set(), key: `${date}|${session}|${r.id}` }));
     const papers = list.flatMap((u) => u.modules.map((m) => ({ ...m, intake: batches[u.batchIds[0]].intake })))
-      .sort((a, b) => b.students - a.students);
+      .sort((a, b) => (a.withId ? 1 : 0) - (b.withId ? 1 : 0) || b.students - a.students);   // repeaters' old papers after their host
     const give = (room, m, n) => {
-      room.used += n; room.intakes.add(m.intake);
+      room.used += n; room.intakes.add(m.intake); room.mods.add(m.id);
       const h = halls.get(room.key) || { date, session, roomId: room.id, exams: [] };
       h.exams.push({ moduleId: m.id, seats: n });
       halls.set(room.key, h);
@@ -229,6 +229,11 @@ export function allocate(units, batches, rooms, sched) {
     for (const m of papers) {
       let left = m.students;
       while (left > 0) {
+        // repeat students of an old paper sit in the same hall as the paper they sit with
+        if (m.withId) {
+          const host = state.filter((r) => r.mods.has(m.withId) && r.cap - r.used >= left).sort((a, b) => (b.cap - b.used) - (a.cap - a.used))[0];
+          if (host) { give(host, m, left); break; }
+        }
         const free = state.filter((r) => r.used === 0);
         const share = state.filter((r) => r.used > 0 && r.cap - r.used >= left && r.intakes.has(m.intake))
           .sort((a, b) => (a.cap - a.used) - (b.cap - b.used))[0];

@@ -12,6 +12,7 @@ import { republish } from "./versions.js";
 import { toast } from "./crud.js";
 import { generate, workingDays, allocate, GRADE_WEIGHT, timeLabel, unavailable } from "./engine.js";
 import { buildInput, saveTimetable, loadAll } from "./generate.js";
+import { resolveRepeats, ensureRepeatModules, planModules, repeatsEditor } from "./repeats.js";
 
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -85,6 +86,13 @@ export function mountEditor({ panel, T, periodId, reload, onSelect }) {
       panel.innerHTML = `
         <p class="muted small">Click a <b>paper</b> (By stream) or a <b>hall</b> (Halls &amp; staff) to change it.
           Everything you change is <b>locked</b>, so re-planning keeps it.</p>
+        <div class="ep-block">
+          <p class="ep-label">Repeat students</p>
+          <p class="small muted">${(T.period.options?.repeats || []).length
+            ? `${T.period.options.repeats.length} rows · ${T.period.options.repeats.reduce((a, r) => a + (Number(r.repeats) || 0), 0)} students`
+            : "None entered yet."} Repeat numbers change hall sizes, so re-plan after changing them.</p>
+          <button class="btn light full" data-act="repeats"><i class="ti ti-users"></i> Edit repeat students</button>
+        </div>
         <div class="ep-block">
           <p class="ep-label">Re-plan</p>
           <p class="small muted">Plan again everything that is not locked: dates, halls and staff. Use this after changing data (e.g. a lecturer on leave).</p>
@@ -178,6 +186,36 @@ export function mountEditor({ panel, T, periodId, reload, onSelect }) {
   }
 
   // ----- saving -----
+  // ----- repeat students of this timetable -----
+  function repeatsDialog() {
+    const mods = Object.values(T.moduleById).filter((m) => (T.batchesOf[m.id] || []).length);
+    const dlg = document.createElement("dialog");
+    dlg.className = "form-dialog wide-dialog";
+    dlg.innerHTML = `<form method="dialog"><h2>Repeat students</h2>
+        <p class="muted">For this timetable only. Repeats of a paper here add to its count; repeats of an old paper sit with their batch's paper (same time, same hall).</p>
+        <div id="rep-box"></div>
+        <div class="dialog-actions"><button type="button" class="btn light" value="cancel">Cancel</button><button class="btn">Save and re-plan</button></div></form>`;
+    document.body.appendChild(dlg); dlg.showModal();
+    dlg.querySelector('[value="cancel"]').onclick = () => dlg.close();
+    dlg.addEventListener("close", () => dlg.remove());
+    const ed = repeatsEditor(dlg.querySelector("#rep-box"), T.period.options?.repeats || [], {
+      resolve: (rows) => resolveRepeats(rows, { mods, batchesOf: T.batchesOf, batchById: T.batchById, allModules: Object.values(T.moduleById) }) });
+    dlg.querySelector("form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const res = resolveRepeats(ed.rows, { mods, batchesOf: T.batchesOf, batchById: T.batchById, allModules: Object.values(T.moduleById) });
+      const bad = res.filter((r) => !r.ok);
+      if (bad.length && !confirm(`${bad.length} row${bad.length > 1 ? "s" : ""} can't be used and will be left out:\n• ${bad.map((r) => `${r.module_code}: ${r.status}`).join("\n• ")}\n\nContinue?`)) return;
+      const repeats = res.filter((r) => r.ok).map(({ module_code, module_name, stream, repeats, sit_with, duration }) => ({ module_code, module_name, stream, repeats, sit_with, duration }));
+      dlg.close();
+      await run("Repeat students saved and the timetable re-planned (locked papers kept).", async () => {
+        const options = { ...(T.period.options || {}), repeats };
+        await q(supabase.from("exam_periods").update({ options }).eq("id", periodId));
+        T.period.options = options;
+        await replan();
+      });
+    });
+  }
+
   async function run(label, fn) {
     panel.classList.add("busy");
     try { await fn(); toast(label); await reload(sel); }
@@ -227,8 +265,11 @@ export function mountEditor({ panel, T, periodId, reload, onSelect }) {
     const o = T.period.options || {};
     const days = workingDays(T.period.start_date, T.period.end_date, data.holidays.map((h) => h.holiday_date));
     const moduleIds = new Set(T.exams.map((e) => e.moduleId));
-    const mods = data.modules.filter((m) => moduleIds.has(m.id));
     const batchById = Object.fromEntries(data.batches.map((b) => [b.id, b]));
+    // the batch papers (old papers of repeat students are added again from the repeat list)
+    const baseMods = data.modules.filter((m) => moduleIds.has(m.id) && (T.batchesOf[m.id] || []).length);
+    const resolved = resolveRepeats(o.repeats || [], { mods: baseMods, batchesOf: T.batchesOf, batchById, allModules: data.modules });
+    const mods = planModules(baseMods, resolved, await ensureRepeatModules(resolved, data.modules));
     const roomSet = new Set(o.rooms || data.rooms.map((r) => r.id));
     const staffSet = new Set(o.staff || data.staff.map((s) => s.id));
     const locked = T.exams.filter((e) => e.locked).map((e) => ({ moduleId: e.moduleId, date: e.date, session: e.session }));
@@ -263,6 +304,7 @@ export function mountEditor({ panel, T, periodId, reload, onSelect }) {
       const [d, s] = v.split("|");
       return run(`Moved to ${fmt(d)} ${s === "AM" ? "morning" : "afternoon"} and locked.`, () => movePaper(e, d, s));
     }
+    if (act === "repeats") return repeatsDialog();
     if (act === "replan") {
       if (!confirm("Re-plan everything that is not locked? Unlocked papers may move to other days and staff may change.")) return;
       return run("Re-planned. Locked papers and duties were kept.", replan);

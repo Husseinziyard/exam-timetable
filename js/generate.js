@@ -6,6 +6,7 @@
 import { supabase } from "./config.js";
 import { generate, workingDays, DEFAULT_WEEKLY_LIMITS } from "./engine.js";
 import { toast, parseTags } from "./crud.js";
+import { repeatsEditor, resolveRepeats, ensureRepeatModules, planModules } from "./repeats.js";
 
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -119,6 +120,11 @@ export async function openGenerateDialog(onSaved) {
       <h3 class="gen-h">Papers <span class="muted small" id="g-mod-count"></span></h3>
       <div id="g-papers"></div>
 
+      <h3 class="gen-h">Repeat students</h3>
+      <p class="gen-sub">Upload the repeat list (Excel or CSV) or type it in. Repeats of a paper in this timetable add to its count (P42 + R15).
+        Repeats of an old paper sit <b>at the same time and in the same hall</b> as their batch's paper (“sits with”). You can also change this later in Edit.</p>
+      <div id="g-repeats"></div>
+
       <h3 class="gen-h">Staff <span class="muted small" id="g-staff-count"></span></h3>
       <details class="picker"><summary>Choose staff (everyone active is included by default)</summary>
         <div class="picker-tools">
@@ -165,8 +171,11 @@ export async function openGenerateDialog(onSaved) {
     batchesOf = matchBatches(modules, activeBatches, semesterOf(), deptSet());
     return modules.filter((m) => batchesOf[m.id]);
   }
+  let repEditor = null;
+  const resolveNow = (rows) => resolveRepeats(rows, { mods: selectedModules(), batchesOf, batchById, allModules: modules });
   function drawModules() {
     const mods = selectedModules();
+    repEditor?.refresh();
     const sem = semesterOf(), deps = deptSet();
     // per intake: papers, and streams that have no papers for that semester
     for (const i of intakes) {
@@ -222,6 +231,7 @@ export async function openGenerateDialog(onSaved) {
   $("#g-start").addEventListener("input", summary);
   $("#g-end").addEventListener("input", summary);
   drawModules();
+  repEditor = repeatsEditor($("#g-repeats"), [], { resolve: resolveNow });
 
   dlg.querySelector("form").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -254,7 +264,15 @@ export async function openGenerateDialog(onSaved) {
       if (error) throw error;
     } catch (err) { toast(`Weekly limits were used but not saved for next time: ${err.message || err}`, "error"); }
 
-    const input = buildInput({ mods, batchesOf, batchById, departments, rooms: rooms.filter((r) => roomIds.has(r.id)),
+    // repeat students: counts + old papers that sit with a current paper
+    const resolved = resolveNow(repEditor.rows);
+    const badRep = resolved.filter((r) => !r.ok);
+    if (badRep.length && !confirm(`${badRep.length} repeat row${badRep.length > 1 ? "s" : ""} can't be used yet:\n• ${badRep.map((r) => `${r.module_code}: ${r.status}`).join("\n• ")}\n\nGenerate without ${badRep.length > 1 ? "them" : "it"}? (You can fix and add them later in Edit.)`)) return;
+    let planMods;
+    try { planMods = planModules(mods, resolved, await ensureRepeatModules(resolved, modules)); }
+    catch (err) { return show(err.message || String(err)); }
+
+    const input = buildInput({ mods: planMods, batchesOf, batchById, departments, rooms: rooms.filter((r) => roomIds.has(r.id)),
       staff: staff.filter((x) => staffIds.has(x.id)), leave, opts, availability, responses, limits: newLimits });
 
     const btn = $("#g-go");
@@ -264,7 +282,8 @@ export async function openGenerateDialog(onSaved) {
       const periodId = await saveTimetable({
         name: $("#g-name").value.trim() || "Exam timetable", start: s, end: en,
         options: { ...opts, days: undefined, intakes: checked("g-intakes"), semesters: semesterOf(), departments: checked("g-depts"),
-          modules: mods.map((m) => m.id), rooms: [...roomIds], staff: [...staffIds] },
+          modules: mods.map((m) => m.id), rooms: [...roomIds], staff: [...staffIds],
+          repeats: resolved.filter((r) => r.ok).map(({ module_code, module_name, stream, repeats, sit_with, duration }) => ({ module_code, module_name, stream, repeats, sit_with, duration })) },
       }, result, null, batchesOf);
       dlg.close();
       const errs = result.warnings.filter((w) => w.level === "error").length;
@@ -288,12 +307,15 @@ export function buildInput({ mods, batchesOf, batchById, departments, rooms, sta
       label: `Intake ${row.intake} · ${row.stream || row.degree}` };
   }
   // papers in the same slot group (e.g. language electives) sit together = one unit
+  // repeat students' old papers (m.sitWith) join the unit of the paper they sit with
   const groups = new Map();
+  const byId = Object.fromEntries(mods.map((m) => [m.id, m]));
+  const keyOf = (m) => (m.sitWith && byId[m.sitWith] ? keyOf(byId[m.sitWith]) : m.slot_group ? `g:${m.slot_group}` : `m:${m.id}`);
   for (const m of mods) {
-    const key = m.slot_group ? `g:${m.slot_group}` : `m:${m.id}`;
+    const key = keyOf(m);
     const u = groups.get(key) || { key, modules: [], batchIds: [], students: 0 };
     const n = studentsFor(m, batchesOf, batchById);
-    u.modules.push({ id: m.id, code: m.code, students: n });
+    u.modules.push({ id: m.id, code: m.code, students: n, withId: m.sitWith || null });
     u.batchIds = [...new Set([...u.batchIds, ...(batchesOf[m.id] || [])])];
     u.students += n;
     groups.set(key, u);

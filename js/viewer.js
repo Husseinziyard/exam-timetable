@@ -4,6 +4,7 @@
 // Only PUBLISHED timetables are shown here (never drafts).
 // =====================================================================
 import { supabase } from "./config.js";
+import { withRepeats, cleanRepeats } from "./repeats.js";
 
 export const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -46,7 +47,8 @@ export async function publishedPeriods() {
 
 // Everything about one published timetable, joined up and easy to use
 export async function loadPeriod(periodId) {
-  const [exams, hallSessions, modules, batches, rooms, staff] = await Promise.all([
+  const [period, exams, hallSessions, modules, batches, rooms, staff] = await Promise.all([
+    q(supabase.from("exam_periods").select("*").eq("id", periodId).single()),
     q(supabase.from("exams").select("*").eq("period_id", periodId)),
     q(supabase.from("hall_sessions").select("*").eq("period_id", periodId)),
     q(supabase.from("modules").select("*")),
@@ -62,7 +64,8 @@ export async function loadPeriod(periodId) {
   ]) : [[], []];
 
   const by = (arr, k = "id") => Object.fromEntries(arr.map((x) => [x[k], x]));
-  const moduleById = by(modules), batchById = by(batches), roomById = by(rooms), staffById = by(staff);
+  const repeats = cleanRepeats(period.options?.repeats || []);
+  const moduleById = by(withRepeats(modules, repeats)), batchById = by(batches), roomById = by(rooms), staffById = by(staff);
   const batchesOf = {};
   links.forEach((l) => (batchesOf[l.module_id] ||= []).push(l.batch_id));
   const name = (id) => { const s = staffById[id]; return s ? `${s.title ? s.title + " " : ""}${s.full_name}` : "—"; };
@@ -92,12 +95,22 @@ export async function loadPeriod(periodId) {
     };
   }).sort((a, b) => a.date.localeCompare(b.date) || a.session.localeCompare(b.session) || a.module.code.localeCompare(b.module.code));
   const examById = by(examList);
+  // repeat students: how many per paper, and old papers that sit with a batch paper (shown in italics)
+  const tight = (s) => String(s || "").toUpperCase().replace(/[\s-]/g, "");
+  examList.forEach((e) => {
+    e.repeats = Number(e.module.repeat_students) || 0;
+    if (e.streams.length) return;
+    const row = repeats.find((r) => tight(r.module_code) === tight(e.module.code));
+    const host = row && examList.find((x) => x.streams.length && tight(x.module.code) === tight(row.sit_with) && x.date === e.date && x.session === e.session);
+    if (host) { e.repeatOf = host; e.repStream = row.stream; }
+    e.isRepeatPaper = true;
+  });
 
   // fill in which papers each hall has
   halls.forEach((h) => h.papers.forEach((p) => { p.exam = examById[p.examId]; }));
   halls.sort((a, b) => a.date.localeCompare(b.date) || a.session.localeCompare(b.session) || a.room.name.localeCompare(b.room.name, undefined, { numeric: true }));
 
-  return { exams: examList, halls, hallById, examById, moduleById, batchById, roomById, staffById, batchesOf, name, batches, rooms, staff };
+  return { period, repeats, exams: examList, halls, hallById, examById, moduleById, batchById, roomById, staffById, batchesOf, name, batches, rooms, staff };
 }
 
 // =====================================================================
@@ -246,11 +259,24 @@ export function facultyRows(T, halls) {
     firstIntake(b) - firstIntake(a) || firstStream(a).localeCompare(firstStream(b)) || a.room.name.localeCompare(b.room.name, undefined, { numeric: true }));
   for (const h of sorted) {
     const staff = (r) => h.duties.filter((d) => d.role === r).map((d, i, all) => (all.length > 1 ? `${i + 1}. ` : "") + d.name).join("\n");
-    const papers = [...h.papers].sort((a, b) => (a.exam?.streams[0]?.stream || "").localeCompare(b.exam?.streams[0]?.stream || ""));
+    const streamKey = (e) => (e?.streams[0]?.stream || e?.repStream || e?.repeatOf?.streams[0]?.stream || "") + (e?.isRepeatPaper ? "~" : "");
+    const papers = [...h.papers].sort((a, b) => streamKey(a.exam).localeCompare(streamKey(b.exam)));
     for (const p of papers) {
       const e = p.exam; if (!e) continue;
-      const m = e.module, bs = e.streams;
-      const rep = Number(m.repeat_students) || 0;
+      const m = e.module, bs = e.streams.length ? e.streams : (e.repeatOf?.streams || []);
+      if (e.isRepeatPaper) {        // an old paper of repeat students, sitting with its batch's paper
+        rows.push({
+          date: h.date, session: h.session, hallId: h.id, italic: true,
+          intake: [...new Set(bs.map((b) => b.intake))].join("/") || "—",
+          sem: [...new Set(bs.map((b) => pad2(b.semester)))].join("/") || "—",
+          streams: e.repStream || bs.map((b) => b.stream).join("\n") || "Repeat",
+          subject: `${m.name}\n[${m.code}]\n[${pad2(m.duration_hours || 2)}hr Paper]`,
+          stu: `R${pad2(p.seats)}`, count: pad2(p.seats), total: String(h.students), hall: h.room.name,
+          sup: staff("SUPERVISOR"), inv: staff("INVIGILATOR"), ha: staff("ATTENDANT"),
+        });
+        continue;
+      }
+      const rep = e.repeats || 0;
       const one = e.halls.length === 1;
       rows.push({
         date: h.date, session: h.session, hallId: h.id,
@@ -314,7 +340,8 @@ export async function pdfFacultySheet(T, period, { halls = T.halls, note = "", f
       cell(SESSION_TIME[r.session], kSes, { styles: { fillColor: [245, 205, 170], halign: "center" } });
       cell(r.intake, kInt, { styles: { fillColor: [245, 205, 170], halign: "center" } });
       cell(r.sem, kInt, { styles: { halign: "center" } });
-      row.push(r.streams, r.subject, r.stu, r.count);
+      if (r.italic) row.push(r.streams, { content: r.subject, styles: { fontStyle: "italic" } }, r.stu, r.count);
+      else row.push(r.streams, r.subject, r.stu, r.count);
       cell(r.total, kHall, { styles: { halign: "center", valign: "middle" } });
       cell(r.hall, kHall, { styles: { halign: "center", valign: "middle" } });
       cell(r.sup, kHall); cell(r.inv, kHall); cell(r.ha, kHall, { styles: { halign: "center" } });

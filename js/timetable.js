@@ -12,6 +12,7 @@ import { mountScale } from "./scale.js";
 import { availabilityMap, preferenceMap } from "./generate.js";
 import { DEFAULT_WEEKLY_LIMITS } from "./engine.js";
 import { workingDays } from "./engine.js";
+import { withRepeats } from "./repeats.js";
 import { examLinks, loadPeriod, pdfFacultySheet, pdfBatches, pdfAllStaff, timetableBatches } from "./viewer.js";
 import { findDraftCopy, copyPeriod, deletePeriod, confirmDelete } from "./versions.js";
 
@@ -145,7 +146,8 @@ export async function loadTimetable(periodId) {
     q(supabase.from("duties").select("*").in("hall_session_id", hallIds)),
   ]) : [[], []];
 
-  const moduleById = Object.fromEntries(modules.map((m) => [m.id, m]));
+  // repeat counts entered for this timetable override the Modules list
+  const moduleById = Object.fromEntries(withRepeats(modules, period.options?.repeats).map((m) => [m.id, m]));
   const batchById = Object.fromEntries(batches.map((b) => [b.id, b]));
   const roomById = Object.fromEntries(rooms.map((r) => [r.id, r]));
   const staffById = Object.fromEntries(staff.map((s) => [s.id, s]));

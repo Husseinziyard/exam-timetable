@@ -606,3 +606,12 @@ details.sc-group .sc-row:last-of-type { border-bottom: 0; }
   .sw-wrap, .sw { min-width: 0; width: 100%; }
   .sw-pair { width: 100%; display: grid; grid-template-columns: 1fr 1fr; }
 }
+
+/* ----- Repeat students table ----- */
+.form-dialog.wide-dialog { width: min(1100px, 96vw); max-width: 96vw; }
+.rep-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0 10px; }
+.rep-tools label.btn { margin: 0; cursor: pointer; }
+.rep-table { max-height: 320px; overflow: auto; border: 1px solid var(--line); border-radius: 10px; }
+table.data.compact th, table.data.compact td { padding: 6px 8px; font-size: 13px; vertical-align: middle; }
+table.data.compact input { padding: 6px 8px; font-size: 13px; width: 100%; min-width: 70px; }
+table.data.compact tr.bad td { background: #fff1ef; }
