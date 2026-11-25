@@ -60,9 +60,11 @@ export function slotStatus(T, e, d, s) {
   if (!T.days.includes(d) || !["AM", "PM"].includes(s)) return { cls: "bad", note: "not an exam day in this period" };
   const m = T.moduleById[e.moduleId] || {};
   const streams = T.batchesOf[e.moduleId] || [];
-  const sameSlot = T.exams.some((x) => x.id !== e.id && x.date === d && x.session === s && (T.batchesOf[x.moduleId] || []).some((b) => streams.includes(b)));
+  const grp = T.moduleById[e.moduleId]?.slot_group;
+  const partner = (x) => grp && T.moduleById[x.moduleId]?.slot_group === grp;     // same slot group = sat together, not a clash
+  const sameSlot = T.exams.some((x) => x.id !== e.id && !partner(x) && x.date === d && x.session === s && (T.batchesOf[x.moduleId] || []).some((b) => streams.includes(b)));
   if (sameSlot) return { cls: "bad", note: "clash: a stream already sits a paper" };
-  const sameDay = T.exams.some((x) => x.id !== e.id && x.date === d && (T.batchesOf[x.moduleId] || []).some((b) => streams.includes(b)));
+  const sameDay = T.exams.some((x) => x.id !== e.id && !partner(x) && x.date === d && (T.batchesOf[x.moduleId] || []).some((b) => streams.includes(b)));
   const strict = streams.some((b) => T.batchLite[b]?.onePerDay);
   if (sameDay) return { cls: strict ? "bad" : "warn", note: strict ? "one-exam-per-day department" : "2nd exam that day" };
   const used = T.halls.filter((h) => h.date === d && h.session === s).reduce((a, h) => a + h.exams.reduce((x, y) => x + y.seats, 0), 0);
@@ -233,7 +235,7 @@ export function mountEditor({ panel, T, periodId, reload, onSelect }) {
     const staffSet = new Set(o.staff || data.staff.map((s) => s.id));
     const locked = T.exams.filter((e) => e.locked).map((e) => ({ moduleId: e.moduleId, date: e.date, session: e.session }));
     const lockedDuties = T.halls.flatMap((h) => h.duties.filter((d) => d.locked).map((d) => ({ date: h.date, session: h.session, roomId: h.roomId, staffId: d.staffId, role: d.role })));
-    const input = buildInput({ mods, batchesOf: data.batchesOf, batchById, departments: data.departments,
+    const input = buildInput({ mods, batchesOf: T.batchesOf, batchById, departments: data.departments,
       rooms: data.rooms.filter((r) => roomSet.has(r.id) && !r.on_hold), staff: data.staff.filter((s) => staffSet.has(s.id)),
       leave: data.leave, opts: { days, threshold: o.threshold ?? T.threshold, minGap: o.minGap ?? 1, seed: Date.now() % 100000 }, locked,
       availability: data.availability, responses: data.responses, limits: data.limits });
@@ -242,7 +244,7 @@ export function mountEditor({ panel, T, periodId, reload, onSelect }) {
     // replace this timetable's papers, halls and duties (cascade removes halls' papers and duties)
     await q(supabase.from("exams").delete().eq("period_id", periodId));
     await q(supabase.from("hall_sessions").delete().eq("period_id", periodId));
-    await saveTimetable(null, result, periodId);
+    await saveTimetable(null, result, periodId, T.batchesOf);   // same streams as before
     // keep the lock marks on the papers that were locked
     for (const l of locked) await q(supabase.from("exams").update({ locked: true }).eq("period_id", periodId).eq("module_id", l.moduleId));
     await q(supabase.from("exam_periods").update({ generated_at: new Date().toISOString() }).eq("id", periodId));

@@ -12,6 +12,7 @@ import { mountScale } from "./scale.js";
 import { availabilityMap, preferenceMap } from "./generate.js";
 import { DEFAULT_WEEKLY_LIMITS } from "./engine.js";
 import { workingDays } from "./engine.js";
+import { examLinks } from "./viewer.js";
 import { findDraftCopy, copyPeriod, deletePeriod, confirmDelete } from "./versions.js";
 
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) =>
@@ -123,11 +124,10 @@ function syncDrawerPosition() {
 // =====================================================================
 export async function loadTimetable(periodId) {
   const period = await q(supabase.from("exam_periods").select("*").eq("id", periodId).single());
-  const [exams, halls, modules, links, batches, rooms, staff, leave, settings, availability, responses] = await Promise.all([
+  const [exams, halls, modules, batches, rooms, staff, leave, settings, availability, responses] = await Promise.all([
     q(supabase.from("exams").select("*").eq("period_id", periodId)),
     q(supabase.from("hall_sessions").select("*").eq("period_id", periodId)),
     q(supabase.from("modules").select("*")),
-    q(supabase.from("module_batches").select("*")),
     q(supabase.from("batches").select("*")),
     q(supabase.from("rooms").select("*")),
     q(supabase.from("lecturers").select("*")),
@@ -138,6 +138,7 @@ export async function loadTimetable(periodId) {
   ]);
   const limits = { ...DEFAULT_WEEKLY_LIMITS, ...(settings.find((s) => s.key === "weekly_limits")?.value || {}) };
   const unavailBy = availabilityMap(availability), prefBy = preferenceMap(responses);
+  const links = await examLinks(exams);
   const hallIds = halls.map((h) => h.id);
   const [examHalls, duties] = hallIds.length ? await Promise.all([
     q(supabase.from("exam_halls").select("*").in("hall_session_id", hallIds)),
@@ -200,6 +201,7 @@ export async function renderTimetable(root, periodId, go, view = "streams", ui =
     exams: T.exams, halls: T.halls, moduleBatches: T.batchesOf, moduleStudents: T.moduleStudents,
     moduleCode: Object.fromEntries(Object.values(T.moduleById).map((m) => [m.id, m.code])),
     batches: T.batchLite, staff: T.staffLite, threshold: T.threshold,
+    slotGroup: Object.fromEntries(Object.values(T.moduleById).filter((m) => m.slot_group).map((m) => [m.id, m.slot_group])),
   });
   const n = (lvl) => checks.filter((c) => c.level === lvl).length;
   const p = T.period;

@@ -41,6 +41,10 @@ export async function copyPeriod(liveId) {
     }))).select("id,module_id")) : [];
     const byModule = Object.fromEntries(newExams.map((e) => [e.module_id, e.id]));
     const examMap = Object.fromEntries(exams.map((e) => [e.id, byModule[e.module_id]]));
+    // which batches sat each paper
+    const oldIds = exams.map((e) => e.id), links = [];
+    for (const ids of chunks(oldIds)) links.push(...await q(supabase.from("exam_batches").select("*").in("exam_id", ids)));
+    for (const part of chunks(links, 500)) await q(supabase.from("exam_batches").insert(part.map((l) => ({ exam_id: examMap[l.exam_id], batch_id: l.batch_id }))));
 
     // halls (one per room, date and session)
     const key = (h) => `${h.exam_date}|${h.session}|${h.room_id}`;

@@ -557,3 +557,13 @@ details.sc-group .sc-row:last-of-type { border-bottom: 0; }
 .btn.danger { color: var(--red); }
 .btn.light.danger:hover { border-color: var(--red); }
 .ai-ro { background: #eef3fa; border-radius: 10px; padding: 10px 12px; font-size: 13px; margin-bottom: 12px; display: flex; gap: 8px; }
+
+/* ----- Generate: intake + semester rows ----- */
+.sem-rows { display: flex; flex-direction: column; gap: 8px; }
+.sem-row { display: grid; grid-template-columns: 140px 170px 1fr; gap: 12px; align-items: center;
+  padding: 10px 14px; border: 1px solid var(--line); border-radius: 10px; }
+.sem-row .check { margin: 0; }
+.sem-row select { padding: 7px 10px; }
+.sem-row:has(input:not(:checked)) { opacity: .55; }
+.sem-row:has(input:not(:checked)) select { pointer-events: none; }
+@media (max-width: 640px) { .sem-row { grid-template-columns: 1fr 1fr; } .sem-row [data-sem-info] { grid-column: 1 / -1; } }

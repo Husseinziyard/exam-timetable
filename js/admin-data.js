@@ -76,12 +76,13 @@ export const SECTIONS = {
 
   modules: {
     title: "Modules", singular: "module", table: "modules", pk: "id", order: "code", conflict: "code", hold: true,
-    help: "Tick every stream that sits this paper together (e.g. Business Law for MTS, MTH, LM and LMH). Modules with the same slot group (e.g. language electives) are scheduled at the same time.",
+    help: "The full list of papers for every programme and semester. Add them once — each exam period you only choose which semester each intake is sitting. Tick every stream (programme) that sits a paper together, e.g. Business Law for MTS, MTH, LM and LMH. Papers with the same slot group (e.g. “Sinhala or Tamil”) are scheduled at the same time.",
     fields: [
       { key: "code", label: "Module code", required: true, list: true },
       { key: "name", label: "Module name", required: true, list: true },
-      { key: "batches", label: "Streams sitting this paper", type: "multi", ref: "batches",
-        link: "module_batches", linkKey: "module_id", linkRef: "batch_id", required: true, list: true },
+      { key: "streams", label: "Streams sitting this paper", type: "tags", required: true, list: true,
+        suggest: { table: "batches", column: "stream" },
+        hint: "Stream codes as used in Batches (MTS, LM, BSM…). Not tied to an intake — every intake in this semester sits it." },
       { key: "semester", label: "Semester", type: "number", required: true, list: true, filter: true },
       { key: "duration_hours", label: "Paper length (hours)", type: "number", step: "0.5", list: true, filter: true },
       { key: "repeat_students", label: "Repeat students (R)", type: "number", list: true },
@@ -91,7 +92,7 @@ export const SECTIONS = {
       { key: "slot_group", label: "Slot group (electives)", filter: true },
       { key: "examiner_id", label: "Examiner", type: "fk", ref: "lecturers", csv: "examiner", filter: false },
     ],
-    example: { code: "MGT 120202", name: "Business Law", batches: "43|MTS; 43|MTH; 43|LM; 43|LMH", semester: "2", duration_hours: "2", repeat_students: "15", expected_students: "", audience: "all", slot_group: "", examiner: "" },
+    example: { code: "MGT 110202", name: "Business Law", streams: "MTS; MTH; LM; LMH", semester: "1", duration_hours: "2", repeat_students: "15", expected_students: "", audience: "all", slot_group: "", examiner: "" },
   },
 
   batches: {

@@ -27,6 +27,18 @@ async function q(promise) {
   return data;
 }
 
+// Which batches sat each paper of a timetable -> [{ module_id, batch_id }]
+// (saved with the timetable, so old timetables stay right when the next intake sits the same papers)
+export async function examLinks(exams) {
+  const modOf = Object.fromEntries(exams.map((e) => [e.id, e.module_id]));
+  const ids = exams.map((e) => e.id), out = [];
+  for (let i = 0; i < ids.length; i += 200) {
+    const rows = await q(supabase.from("exam_batches").select("*").in("exam_id", ids.slice(i, i + 200)));
+    rows.forEach((r) => out.push({ module_id: modOf[r.exam_id], batch_id: r.batch_id }));
+  }
+  return out;
+}
+
 // Published timetables, newest first
 export async function publishedPeriods() {
   return q(supabase.from("exam_periods").select("*").eq("status", "published").order("start_date", { ascending: false }));
@@ -34,15 +46,15 @@ export async function publishedPeriods() {
 
 // Everything about one published timetable, joined up and easy to use
 export async function loadPeriod(periodId) {
-  const [exams, hallSessions, modules, links, batches, rooms, staff] = await Promise.all([
+  const [exams, hallSessions, modules, batches, rooms, staff] = await Promise.all([
     q(supabase.from("exams").select("*").eq("period_id", periodId)),
     q(supabase.from("hall_sessions").select("*").eq("period_id", periodId)),
     q(supabase.from("modules").select("*")),
-    q(supabase.from("module_batches").select("*")),
     q(supabase.from("batches").select("*")),
     q(supabase.from("rooms").select("*")),
     q(supabase.from("lecturers").select("id,title,full_name,grade")),
   ]);
+  const links = await examLinks(exams);
   const hallIds = hallSessions.map((h) => h.id);
   const [examHalls, duties] = hallIds.length ? await Promise.all([
     q(supabase.from("exam_halls").select("*").in("hall_session_id", hallIds)),

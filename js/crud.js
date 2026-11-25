@@ -61,6 +61,7 @@ function displayValue(f, row, refs) {
   if (f.type === "checkbox") return v ? "Yes" : '<span class="muted">No</span>';
   if (f.type === "select") return esc((f.options.find((o) => o[0] === v) || [v, v])[1]);
   if (f.type === "fk") return esc(refs[f.ref]?.find((o) => o.id === v)?.label ?? `#${v}`);
+  if (f.type === "tags") return Array.isArray(v) && v.length ? esc(v.join(", ")) : '<span class="muted">—</span>';
   if (f.type === "multi") {
     if (!v.length) return '<span class="muted">—</span>';
     return v.map((id) => esc((refs[f.ref]?.find((o) => o.id === id)?.label ?? `#${id}`).replace(/^Intake /, ""))).join(", ");
@@ -69,7 +70,14 @@ function displayValue(f, row, refs) {
 }
 
 // Convert a form/CSV value to what the database expects
+// A list of short codes, e.g. "MTS; MTH" -> ["MTS","MTH"]. "43|MTS" is accepted too (the intake is dropped).
+export function parseTags(raw) {
+  const list = Array.isArray(raw) ? raw : String(raw ?? "").split(/[;,\n]/);
+  return [...new Set(list.map((x) => String(x).trim().replace(/^(intake\s*)?\d+\s*[|·]\s*/i, "").trim().toUpperCase()).filter(Boolean))];
+}
+
 function cast(f, raw) {
+  if (f.type === "tags") return parseTags(raw);
   if (f.type === "checkbox") {
     if (typeof raw === "boolean") return raw;
     if (f.auto && String(raw ?? "").trim() === "") return undefined;   // let the database fill it from the grade
@@ -146,7 +154,7 @@ export async function renderSection(root, key) {
     return Object.entries(state.colFilters).every(([k, { op, value }]) => {
       const f = cfg.fields.find((x) => x.key === k);
       const t = cellText(f, r).toLowerCase(), v = value.toLowerCase();
-      if (op === "equals") return f.type === "multi" ? t.split(", ").includes(v) : t === v;
+      if (op === "equals") return f.type === "multi" || f.type === "tags" ? t.split(", ").includes(v) : t === v;
       if (op === "starts") return t.startsWith(v);
       if (op === "not") return !t.includes(v);
       return t.includes(v);
@@ -173,6 +181,15 @@ export async function renderSection(root, key) {
       const { data: links, error: e2 } = await supabase.from(f.link).select("*");
       if (e2) { wrap.innerHTML = `<p class="msg show error">${esc(friendly(e2))}</p>`; return; }
       data.forEach((row) => { row[f.key] = links.filter((l) => l[f.linkKey] === row[cfg.pk]).map((l) => l[f.linkRef]); });
+    }
+    for (const f of cfg.fields.filter((f) => f.type === "tags")) {     // choices = codes already in use
+      let known = [];
+      if (f.suggest) {
+        const { data: sug } = await supabase.from(f.suggest.table).select(f.suggest.column);
+        known = (sug || []).map((x) => x[f.suggest.column]);
+      }
+      state.tagOpts = state.tagOpts || {};
+      state.tagOpts[f.key] = parseTags([...known, ...data.flatMap((r) => r[f.key] || [])]).sort();
     }
     state.rows = data;
     draw();
@@ -289,7 +306,7 @@ export async function renderSection(root, key) {
     const cur = state.colFilters[f.key] || { op: f.type === "select" || f.type === "fk" || f.type === "checkbox" ? "equals" : "contains", value: "" };
     // suggestions = the values that exist in this column
     const values = [...new Set(state.rows.flatMap((r) =>
-      f.type === "multi" ? cellText(f, r).split(", ") : [cellText(f, r)]).filter(Boolean))]
+      f.type === "multi" || f.type === "tags" ? cellText(f, r).split(", ") : [cellText(f, r)]).filter(Boolean))]
       .sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).slice(0, 200);
 
     const pop = document.createElement("div");
@@ -459,6 +476,13 @@ export async function renderSection(root, key) {
       const record = {}, multis = {};
       try {
         for (const f of cfg.fields) {
+          if (f.type === "tags") {
+            const list = parseTags([...[...dlg.querySelectorAll(`[name="${f.key}"]:checked`)].map((el) => el.value),
+              ...parseTags(dlg.querySelector(`[name="${f.key}__more"]`)?.value || "")]);
+            if (f.required && !list.length) throw new Error(`Please choose at least one in “${f.label}”.`);
+            record[f.key] = list;
+            continue;
+          }
           if (f.type === "multi") {
             const ids = [...dlg.querySelectorAll(`[name="${f.key}"]:checked`)].map((el) => Number(el.value));
             if (f.required && !ids.length) throw new Error(`Please tick at least one in “${f.label}”.`);
@@ -496,6 +520,15 @@ export async function renderSection(root, key) {
     const id = `f-${f.key}`;
     if (f.type === "checkbox") {
       return `<label class="check wide"><input type="checkbox" name="${f.key}" ${v ? "checked" : ""}> ${esc(f.label)}</label>`;
+    }
+    if (f.type === "tags") {
+      const chosen = new Set(v || []);
+      const opts = state.tagOpts?.[f.key] || [];
+      return `<div class="wide"><label>${esc(f.label)}${f.required ? " *" : ""}</label>
+        ${f.hint ? `<p class="small muted" style="margin:0 0 6px">${esc(f.hint)}</p>` : ""}
+        <div class="multi tags">${opts.map((o) => `
+          <label class="check"><input type="checkbox" name="${f.key}" value="${esc(o)}" ${chosen.has(o) ? "checked" : ""}> ${esc(o)}</label>`).join("")}</div>
+        <input name="${f.key}__more" placeholder="Other codes, separated by ; (e.g. LM-SCM; LM-TPM)" style="margin-top:8px"></div>`;
     }
     if (f.type === "multi") {
       const chosen = new Set(v || []);
@@ -574,7 +607,7 @@ export async function renderSection(root, key) {
           } else {
             const v = cast(f, r[col]);
             if (v === undefined) continue;
-            if (f.required && (v === null || v === "")) throw new Error(`“${col}” is empty`);
+            if (f.required && (v === null || v === "" || (Array.isArray(v) && !v.length))) throw new Error(`“${col}” is empty`);
             if (f.type === "select" && v !== null && !f.options.some((o) => o[0] === v))
               throw new Error(`“${v}” is not a valid ${f.label.toLowerCase()} (use ${f.options.map((o) => o[0]).join(", ")})`);
             rec[f.key] = v;

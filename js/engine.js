@@ -358,15 +358,19 @@ export function validate(t) {
   const examById = Object.fromEntries(t.exams.map((e) => [e.id, e]));
 
   // a stream never sits two papers at once / one-per-day departments
+  // papers in the same slot group (e.g. "Sinhala or Tamil") are one sitting, not a clash
+  const sitting = (e) => (t.slotGroup?.[e.moduleId] ? `g:${t.slotGroup[e.moduleId]}` : `m:${e.moduleId}`);
   const perBatchSlot = new Map(), perBatchDay = new Map();
   for (const e of t.exams) for (const b of t.moduleBatches[e.moduleId] || []) {
     const k = `${b}|${e.date}|${e.session}`;
-    if (perBatchSlot.has(k)) add("error", `${t.batches[b]?.label}: two papers at the same time on ${e.date} ${e.session}.`, e.id);
-    perBatchSlot.set(k, e);
+    const here = perBatchSlot.get(k) || new Set();
+    if (here.size && !here.has(sitting(e))) add("error", `${t.batches[b]?.label}: two papers at the same time on ${e.date} ${e.session}.`, e.id);
+    perBatchSlot.set(k, here.add(sitting(e)));
     const kd = `${b}|${e.date}`;
-    perBatchDay.set(kd, (perBatchDay.get(kd) || 0) + 1);
+    perBatchDay.set(kd, (perBatchDay.get(kd) || new Set()).add(sitting(e)));
   }
-  for (const [k, n] of perBatchDay) if (n > 1) {
+  for (const [k, set] of perBatchDay) if (set.size > 1) {
+    const n = set.size;
     const [b, date] = k.split("|");
     add(t.batches[b]?.onePerDay ? "error" : "warn", `${t.batches[b]?.label}: ${n} exams on ${date}.`);
   }
