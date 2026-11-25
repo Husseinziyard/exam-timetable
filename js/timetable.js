@@ -7,6 +7,7 @@ import { toast } from "./crud.js";
 import { validate, timeLabel, SESSION_START } from "./engine.js";
 import { openGenerateDialog, studentsFor } from "./generate.js";
 import { mountEditor } from "./edit.js";
+import { mountAI } from "./ai.js";
 import { workingDays } from "./engine.js";
 
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) =>
@@ -214,16 +215,6 @@ export async function renderTimetable(root, periodId, go, view = "streams", ui =
         <div class="tt-body"></div>
       </div>
       <aside class="ai-panel" id="ai-panel" aria-label="AI assistant" ${ui.ai ? "" : "hidden"}>
-        <div class="ep-head"><h3><i class="ti ti-sparkles"></i> AI assistant</h3></div>
-        <p class="small">Ask in plain words, e.g. <i>“Dr. Perera is on leave on 18 Nov — replace her”</i> or
-          <i>“Give ADSC a free day before every exam”</i>. The assistant suggests changes and you approve each one.</p>
-        <div class="ai-setup">
-          <p class="ep-label">Not connected yet</p>
-          <p class="small muted">The assistant needs a free Google Gemini key and a small server function in Supabase,
-            so the key is never visible in the website. This is the next setup step.</p>
-        </div>
-        <textarea class="ai-input" rows="3" placeholder="Ask the assistant…" disabled></textarea>
-        <button class="btn full" disabled>Ask</button>
       </aside>
     </div>`;
 
@@ -233,16 +224,15 @@ export async function renderTimetable(root, periodId, go, view = "streams", ui =
   root.querySelector("#ai-toggle").addEventListener("click", () => rerender({ ai: !ui.ai }));
   root.querySelector("#publish").addEventListener("click", () => rerender({ edit: true, sel: null }));
 
-  // the Edit panel
-  let editor = null;
-  if (ui.edit) {
-    editor = mountEditor({
-      panel: root.querySelector("#edit-panel"), T, periodId,
-      reload: (sel) => rerender({ edit: true, sel }),
-      onSelect: () => markSelected(null),
-    });
-    editor.select(ui.sel?.type, ui.sel?.id);
-  }
+  // the Edit panel (its tools are also used by the AI assistant)
+  const editorObj = mountEditor({
+    panel: root.querySelector("#edit-panel"), T, periodId,
+    reload: (sel) => rerender({ sel }),
+    onSelect: () => markSelected(null),
+  });
+  const editor = ui.edit ? editorObj : null;
+  if (editor) editor.select(ui.sel?.type, ui.sel?.id);
+  if (ui.ai) mountAI({ panel: root.querySelector("#ai-panel"), T, periodId, editor: editorObj, refresh: () => rerender({}) });
   function markSelected(sel) {
     root.querySelectorAll(".is-selected").forEach((x) => x.classList.remove("is-selected"));
     if (!sel) return;

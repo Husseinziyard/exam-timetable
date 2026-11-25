@@ -52,6 +52,23 @@ export function candidates(T, date, session, role, keep = null) {
     .sort((a, b) => a.load - b.load || a.s.full_name.localeCompare(b.s.full_name));
 }
 
+// What happens if paper e moves to day d, session s (used by the Edit panel and the AI assistant)
+export function slotStatus(T, e, d, s) {
+  if (d === e.date && s === e.session) return { cls: "cur", note: "current" };
+  if (!T.days.includes(d) || !["AM", "PM"].includes(s)) return { cls: "bad", note: "not an exam day in this period" };
+  const m = T.moduleById[e.moduleId] || {};
+  const streams = T.batchesOf[e.moduleId] || [];
+  const sameSlot = T.exams.some((x) => x.id !== e.id && x.date === d && x.session === s && (T.batchesOf[x.moduleId] || []).some((b) => streams.includes(b)));
+  if (sameSlot) return { cls: "bad", note: "clash: a stream already sits a paper" };
+  const sameDay = T.exams.some((x) => x.id !== e.id && x.date === d && (T.batchesOf[x.moduleId] || []).some((b) => streams.includes(b)));
+  const strict = streams.some((b) => T.batchLite[b]?.onePerDay);
+  if (sameDay) return { cls: strict ? "bad" : "warn", note: strict ? "one-exam-per-day department" : "2nd exam that day" };
+  const used = T.halls.filter((h) => h.date === d && h.session === s).reduce((a, h) => a + h.exams.reduce((x, y) => x + y.seats, 0), 0);
+  const cap = Object.values(T.roomById).filter((r) => !r.on_hold).reduce((a, r) => a + r.exam_capacity, 0);
+  if (used + (T.moduleStudents[m.id] || 0) > cap) return { cls: "bad", note: "not enough seats" };
+  return { cls: "ok", note: "free" };
+}
+
 // =====================================================================
 export function mountEditor({ panel, T, periodId, reload, onSelect }) {
   let sel = null;          // { type: "exam" | "hall", id }
@@ -95,18 +112,7 @@ export function mountEditor({ panel, T, periodId, reload, onSelect }) {
     const streams = T.batchesOf[m.id] || [];
     const days = T.days;
     // what happens if the paper moves to each slot
-    const options = days.flatMap((d) => ["AM", "PM"].map((s) => {
-      if (d === e.date && s === e.session) return { d, s, cls: "cur", note: "current" };
-      const sameSlot = T.exams.some((x) => x.id !== e.id && x.date === d && x.session === s && (T.batchesOf[x.moduleId] || []).some((b) => streams.includes(b)));
-      if (sameSlot) return { d, s, cls: "bad", note: "clash: a stream already sits a paper" };
-      const sameDay = T.exams.some((x) => x.id !== e.id && x.date === d && (T.batchesOf[x.moduleId] || []).some((b) => streams.includes(b)));
-      const strict = streams.some((b) => T.batchLite[b]?.onePerDay);
-      if (sameDay) return { d, s, cls: strict ? "bad" : "warn", note: strict ? "one-exam-per-day department" : "2nd exam that day" };
-      const used = T.halls.filter((h) => h.date === d && h.session === s).reduce((a, h) => a + h.exams.reduce((x, y) => x + y.seats, 0), 0);
-      const cap = Object.values(T.roomById).filter((r) => !r.on_hold).reduce((a, r) => a + r.exam_capacity, 0);
-      if (used + (T.moduleStudents[m.id] || 0) > cap) return { d, s, cls: "bad", note: "not enough seats" };
-      return { d, s, cls: "ok", note: "free" };
-    }));
+    const options = days.flatMap((d) => ["AM", "PM"].map((s) => ({ d, s, ...slotStatus(T, e, d, s) })));
     panel.innerHTML = `
       <div class="ep-head"><button class="link" data-act="back"><i class="ti ti-arrow-left"></i> Back</button></div>
       <h3>${esc(m.code)}</h3>
@@ -324,7 +330,18 @@ export function mountEditor({ panel, T, periodId, reload, onSelect }) {
       q(supabase.from("duties").update({ lecturer_id: Number(t.value), locked: true }).eq("id", Number(t.dataset.duty))));
   });
 
+  // Carry out one suggestion from the AI assistant (checked beforehand by ai.js)
+  async function applyAction(a) {
+    if (a.type === "move") return movePaper(examOf(a.examId), a.date, a.session);
+    if (a.type === "lock") return q(supabase.from("exams").update({ locked: true }).eq("id", a.examId));
+    if (a.type === "replace") return q(supabase.from("duties").update({ lecturer_id: a.staffId, locked: true }).eq("id", a.dutyId));
+    if (a.type === "add") return q(supabase.from("duties").insert({ hall_session_id: a.hallId, lecturer_id: a.staffId, role: a.role, locked: true }));
+    if (a.type === "remove") return q(supabase.from("duties").delete().eq("id", a.dutyId));
+    throw new Error("Unknown change.");
+  }
+
   return {
+    applyAction,
     select(type, id) { sel = type ? { type, id } : null; draw(); },
     get selection() { return sel; },
     draw,
