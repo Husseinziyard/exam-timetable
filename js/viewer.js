@@ -152,9 +152,15 @@ export function seatMap(room, { used = 0, highlight = null, repeats = 0 } = {}) 
 // PDF (made in the browser — nothing is sent anywhere)
 // =====================================================================
 export async function downloadPdf({ title, subtitle = "", head, body, filename, landscape = true, sections = null }) {
-  const { jsPDF } = await import("https://cdn.jsdelivr.net/npm/jspdf@2.5.2/+esm");
-  const { default: autoTable } = await import("https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.4/+esm");
+  const jsMod = await import("https://cdn.jsdelivr.net/npm/jspdf@2.5.2/+esm");
+  const jsPDF = jsMod.jsPDF || jsMod.default?.jsPDF || jsMod.default;
+  const atMod = await import("https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.4/+esm");
   const doc = new jsPDF({ orientation: landscape ? "landscape" : "portrait", unit: "pt", format: "a4" });
+  // the CDN can package the table plugin in different shapes — find the function wherever it is
+  const fn = [atMod.default, atMod.autoTable, atMod.default?.default, atMod.default?.autoTable].find((f) => typeof f === "function");
+  const applyPlugin = atMod.applyPlugin || atMod.default?.applyPlugin;
+  if (!fn && typeof doc.autoTable !== "function" && applyPlugin) applyPlugin(jsPDF);
+  const autoTable = fn || ((d, opts) => d.autoTable(opts));
   const footer = () => {
     doc.setFontSize(8); doc.setTextColor(140);
     doc.text(`Exam Timetable System · generated ${new Date().toLocaleString("en-GB")}`, 40, doc.internal.pageSize.getHeight() - 20);
