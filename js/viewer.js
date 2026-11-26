@@ -193,31 +193,44 @@ async function loadPdfLibrary() {
 export async function downloadPdf({ title, subtitle = "", head, body, filename, landscape = true, sections = null }) {
   const jsPDF = await loadPdfLibrary();
   const doc = new jsPDF({ orientation: landscape ? "landscape" : "portrait", unit: "pt", format: "a4" });
-  const autoTable = (d, opts) => d.autoTable(opts);
-  const footer = () => {
-    doc.setFontSize(8); doc.setTextColor(140);
-    doc.text(`Exam Timetable System · generated ${new Date().toLocaleString("en-GB")}`, 40, doc.internal.pageSize.getHeight() - 20);
-  };
+  const W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight(), M = 28;
   // one table, or several (e.g. one per batch, each on its own page)
   const parts = sections || [{ title, subtitle, head, body }];
   parts.forEach((part, i) => {
     if (i > 0) doc.addPage();
-    doc.setTextColor(20); doc.setFontSize(16); doc.setFont("helvetica", "bold");
-    doc.text(part.title, 40, 46);
-    doc.setFontSize(10); doc.setFont("helvetica", "normal"); doc.setTextColor(90);
-    const sub = part.subtitle ?? subtitle;
-    if (sub) doc.text(sub, 40, 64);
-    autoTable(doc, {
+    const y = facultyHeading(doc, [FACULTY_NAME, part.title, part.subtitle ?? subtitle], M, W);
+    doc.autoTable({
       head: [part.head], body: part.body.length ? part.body : [[{ content: "Nothing to show.", colSpan: part.head.length }]],
-      startY: sub ? 80 : 64,
-      styles: { fontSize: 9, cellPadding: 5, valign: "top" },
-      headStyles: { fillColor: [19, 32, 58], textColor: 245 },
-      alternateRowStyles: { fillColor: [247, 246, 242] },
-      margin: { left: 40, right: 40 },
-      didDrawPage: footer,
+      startY: y + 4, theme: "grid", ...FACULTY_TABLE, margin: { left: M, right: M, bottom: 28 },
+      styles: { ...FACULTY_TABLE.styles, fontSize: 9 },
     });
   });
+  pageNumbers(doc, W, H);
   doc.save(filename);
+}
+
+// ----- the faculty look: Times, black grid, plain bold heading lines (underlined) -----
+const FACULTY_TABLE = {
+  styles: { font: "times", fontSize: 7.2, cellPadding: 2.5, textColor: 0, lineColor: [60, 60, 60], lineWidth: 0.5, valign: "top", overflow: "linebreak" },
+  headStyles: { fillColor: [255, 255, 255], textColor: 0, fontStyle: "bold", halign: "center", valign: "middle" },
+  rowPageBreak: "avoid", showHead: "everyPage",
+};
+function facultyHeading(doc, lines, M, W, y = 34) {
+  doc.setTextColor(0); doc.setFont("times", "bold"); doc.setFontSize(10);
+  lines.filter(Boolean).forEach((t) => {
+    doc.splitTextToSize(String(t).toUpperCase(), W - 2 * M).forEach((w) => {
+      doc.text(w, M, y); doc.setLineWidth(0.6); doc.line(M, y + 2, M + doc.getTextWidth(w), y + 2); y += 13;
+    });
+  });
+  return y;
+}
+function pageNumbers(doc, W, H) {
+  const n = doc.internal.getNumberOfPages();
+  for (let i = 1; i <= n; i++) {
+    doc.setPage(i); doc.setFillColor(255, 255, 255); doc.rect(W / 2 - 40, H - 24, 80, 14, "F");
+    doc.setFontSize(7); doc.setTextColor(120); doc.setFont("times", "normal");
+    doc.text(`Page ${i} of ${n}`, W / 2, H - 14, { align: "center" });
+  }
 }
 
 // ----- Ready-made PDFs (used by the admin and lecturer pages) -----
@@ -303,7 +316,7 @@ export function facultyRows(T, halls) {
   return rows;
 }
 
-export async function pdfFacultySheet(T, period, { halls = T.halls, note = "", filename = "exam-supervisor-invigilator-list.pdf" } = {}) {
+export async function pdfFacultySheet(T, period, { halls = T.halls, note = "", highlight = null, filename = "exam-supervisor-invigilator-list.pdf" } = {}) {
   const jsPDF = await loadPdfLibrary();
   const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
   const W = doc.internal.pageSize.getWidth(), M = 24;
@@ -321,23 +334,31 @@ export async function pdfFacultySheet(T, period, { halls = T.halls, note = "", f
     doc.text(`Page ${doc.internal.getCurrentPageInfo().pageNumber} of ${n}`, W / 2, doc.internal.pageSize.getHeight() - 14, { align: "center" });
   };
   if (!all.length) weeks.push(firstWeek);
+  // a selection (one person, one batch…) runs on continuously; the full list starts each week on a new page
+  const compact = halls !== T.halls;
   weeks.forEach((mon, wi) => {
-    if (wi > 0) doc.addPage();
+    let y = 34;
     const rows = all.filter((r) => mondayOf(r.date) === mon);
     const last = rows.length ? rows[rows.length - 1].date : mon;
-    // title block
+    const weekLine = `WEEK ${pad2(weekNo(mon))} (${dmy(rows[0]?.date || mon)} - ${dmy(last)})`;
     doc.setTextColor(0); doc.setFont("times", "bold"); doc.setFontSize(10);
+    if (wi > 0 && compact && doc.lastAutoTable.finalY < doc.internal.pageSize.getHeight() - 140) {
+      y = doc.lastAutoTable.finalY + 22;
+      doc.text(weekLine, M, y); doc.line(M, y + 2, M + doc.getTextWidth(weekLine), y + 2); y += 13;
+    } else {
+    if (wi > 0) doc.addPage();
+    // title block
     const lines = [FACULTY_NAME,
       `${sems.map(ord).join(" AND ")} SEMESTER EXAMINATIONS - INTAKE ${intakes.join(" & ")} ${period ? `(${period.name.toUpperCase()})` : ""}`.trim(),
       "SUPERVISOR / INVIGILATOR LIST",
       `${streams.join("/")} DEGREE PROGRAMMES`,
-      `WEEK ${pad2(weekNo(mon))} (${dmy(rows[0]?.date || mon)} - ${dmy(last)})`];
-    if (note) lines.push(note.toUpperCase());
-    let y = 34;
+      weekLine];
+    if (note) lines.splice(4, 0, note.toUpperCase());
     lines.forEach((t) => {
       const wrapped = doc.splitTextToSize(t, W - 2 * M);
       wrapped.forEach((w) => { doc.text(w, M, y); doc.line(M, y + 2, M + doc.getTextWidth(w), y + 2); y += 13; });
     });
+    }
     // body with merged cells (rowSpan): date, time, intake/sem, and everything about a hall
     const body = [];
     const span = (i, key) => { let n = 1; while (i + n < rows.length && key(rows[i + n]) === key(rows[i])) n++; return n; };
@@ -354,7 +375,11 @@ export async function pdfFacultySheet(T, period, { halls = T.halls, note = "", f
       else row.push(r.streams, r.subject, r.stu, r.count);
       cell(r.total, kHall, { styles: { halign: "center", valign: "middle" } });
       cell(r.hall, kHall, { styles: { halign: "center", valign: "middle" } });
-      cell(r.sup, kHall); cell(r.inv, kHall); cell(r.ha, kHall, { styles: { halign: "center" } });
+      // the person this sheet is for: their cell in bold on a light grey background
+      const mine = (role) => highlight != null && T.hallById[r.hallId]?.duties.some((d) => d.staffId === highlight && d.role === role)
+        ? { fontStyle: "bold", fillColor: [225, 225, 225] } : {};
+      cell(r.sup, kHall, { styles: mine("SUPERVISOR") }); cell(r.inv, kHall, { styles: mine("INVIGILATOR") });
+      cell(r.ha, kHall, { styles: { halign: "center", ...mine("ATTENDANT") } });
       body.push(row);
     });
     doc.autoTable({
@@ -427,16 +452,8 @@ export function timetableBatches(T) {
 // One person's duties: where they must be, when, and with whom
 export function pdfStaff(T, period, staffId, name) {
   const hs = T.halls.filter((h) => h.duties.some((d) => d.staffId === staffId));
-  return downloadPdf({
-    title: `Exam duties — ${name}`, subtitle: `${periodLine(period)} · ${hs.length} dut${hs.length === 1 ? "y" : "ies"}`,
-    head: ["Date", "Time", "Exam hall", "My role", "Papers", "Batches", "Students", "With"],
-    body: hs.map((h) => [fmtDate(h.date, { weekday: "short", day: "2-digit", month: "short" }), hallTime(h), h.room.name,
-      ROLE_NAMES[h.duties.find((d) => d.staffId === staffId)?.role] || "",
-      h.papers.map((p) => `${p.exam?.module.code} ${p.exam?.module.name}`).join("\n"),
-      [...new Set(h.papers.flatMap((p) => p.exam?.streams.map(batchLabel) || []))].join(", "), String(h.students),
-      h.duties.filter((d) => d.staffId !== staffId).map((d) => `${d.name} (${ROLE_NAMES[d.role]})`).join("\n")]),
-    filename: `exam-duties-${name.replace(/\W+/g, "-").toLowerCase()}.pdf`,
-  });
+  return pdfFacultySheet(T, period, { halls: hs, note: `Duties of ${name} (${hs.length} dut${hs.length === 1 ? "y" : "ies"})`,
+    highlight: staffId, filename: `exam-duties-${name.replace(/\W+/g, "-").toLowerCase()}.pdf` });
 }
 
 // Duty list for every staff member (one page each) — handy for the exam office
