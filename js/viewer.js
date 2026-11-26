@@ -435,13 +435,71 @@ export function batchRows(T, batchId) {
     .map((e) => [fmtDate(e.date, { weekday: "long", day: "numeric", month: "long" }), e.time, e.module.code, e.module.name,
       e.halls.map((x) => x.hall.room.name).join(", ") || "—"]);
 }
-export function pdfBatches(T, period, batchIds, filename = "batch-timetables.pdf") {
-  const sections = batchIds.map((id) => {
+// Batch timetables in the faculty look: heading block, one block per week, merged date cells, Dean's line.
+// One batch per page (several batches → several pages).
+const hhmm = (t) => String(t || "").split(/[–-]/).map((x) => x.trim().replace(":", "") + "H").join(" - ");
+export async function pdfBatches(T, period, batchIds, filename = "batch-timetables.pdf") {
+  const jsPDF = await loadPdfLibrary();
+  const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+  const W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight(), M = 34;
+  const firstWeek = period?.start_date ? mondayOf(period.start_date) : null;
+  const head = [["DATE", "TIME", "MODULE CODE", "SUBJECT", "NO. OF STU.", "EXAM HALL/S"]];
+  const underline = (t, y) => { doc.text(t, M, y); doc.setLineWidth(0.6); doc.line(M, y + 2, M + doc.getTextWidth(t), y + 2); };
+  batchIds.forEach((id, bi) => {
     const b = T.batchById[id];
-    return { title: `Exam timetable — Intake ${b.intake} · ${b.stream || b.degree} · Semester ${b.semester}`,
-      subtitle: periodLine(period), head: ["Date", "Time", "Module code", "Module", "Exam hall"], body: batchRows(T, id) };
+    if (bi > 0) doc.addPage();
+    const exams = T.exams.filter((e) => e.streams.some((x) => x.id === Number(id)));
+    doc.setTextColor(0); doc.setFont("times", "bold"); doc.setFontSize(10);
+    let y = 40;
+    [FACULTY_NAME,
+      `${ord(Number(b.semester))} SEMESTER EXAMINATIONS - INTAKE ${b.intake}${period ? ` (${period.name.toUpperCase()})` : ""}`,
+      "EXAMINATION TIMETABLE",
+      `${String(b.stream || b.degree).toUpperCase()} DEGREE PROGRAMME`,
+    ].forEach((t) => doc.splitTextToSize(t, W - 2 * M).forEach((w) => { underline(w, y); y += 14; }));
+    const weeks = [...new Set(exams.map((e) => mondayOf(e.date)))].sort();
+    if (!weeks.length) {
+      doc.autoTable({ head, body: [[{ content: "No exams for this batch in this timetable.", colSpan: 6 }]], startY: y + 6, theme: "grid", ...FACULTY_TABLE, margin: { left: M, right: M } });
+    }
+    const fw = firstWeek || weeks[0];
+    weeks.forEach((mon, wi) => {
+      const rows = exams.filter((e) => mondayOf(e.date) === mon);
+      y = wi === 0 ? y + 4 : doc.lastAutoTable.finalY + 20;
+      if (y > H - 120) { doc.addPage(); y = 44; }
+      const weekNo = Math.round((new Date(mon) - new Date(fw)) / 604800000) + 1;
+      doc.setFont("times", "bold"); doc.setFontSize(10);
+      underline(`WEEK ${pad2(weekNo)} (${dmy(rows[0].date)} - ${dmy(rows[rows.length - 1].date)})`, y);
+      const body = rows.map((e, i) => {
+        const row = [];
+        if (i === 0 || rows[i - 1].date !== e.date) {
+          let n = 1; while (i + n < rows.length && rows[i + n].date === e.date) n++;
+          row.push({ content: `${fmtDate(e.date, { day: "2-digit", month: "short" }).replace(" ", "-")}\n[${new Date(e.date + "T00:00:00Z").toLocaleDateString("en-GB", { weekday: "long", timeZone: "UTC" }).toUpperCase()}]`, rowSpan: n });
+        }
+        const seats = e.halls.reduce((a, x) => a + x.seats, 0);
+        row.push({ content: hhmm(e.time), styles: { fillColor: [245, 205, 170], halign: "center" } },
+          e.module.code, `${e.module.name}\n[${pad2(e.module.duration_hours || 3)} Hours]`,
+          { content: String(seats || "—"), styles: { halign: "center" } },
+          e.halls.map((x) => x.hall.room.name).join(", ") || "—");
+        return row;
+      });
+      doc.autoTable({
+        head, body, startY: y + 6, theme: "grid", ...FACULTY_TABLE, margin: { left: M, right: M, bottom: 30 },
+        styles: { ...FACULTY_TABLE.styles, fontSize: 9, cellPadding: 3.5 },
+        columnStyles: { 0: { cellWidth: 82 }, 1: { cellWidth: 74 }, 2: { cellWidth: 74 }, 4: { cellWidth: 46 }, 5: { cellWidth: 88 } },
+      });
+    });
+    // closing: notes and Dean's line
+    y = (doc.lastAutoTable?.finalY || y) + 26;
+    if (y > H - 90) { doc.addPage(); y = 50; }
+    doc.setFont("times", "bold"); doc.setFontSize(9);
+    doc.text("NOTES -", M, y);
+    doc.text("# TIMES SHOWN ARE THE START AND END OF EACH PAPER.", M + 50, y);
+    doc.text("# WHERE MORE THAN ONE HALL IS SHOWN, THE BATCH IS SHARED BETWEEN THOSE HALLS.", M + 50, y + 12);
+    y += 52;
+    doc.setFont("times", "normal"); doc.text("................................................", M, y);
+    doc.setFont("times", "bold"); doc.text("Dean - FMSH", M, y + 13);
   });
-  return downloadPdf({ sections, filename, landscape: false });
+  pageNumbers(doc, W, H);
+  doc.save(filename);
 }
 // The batches that sit something in this timetable, newest intake first
 export function timetableBatches(T) {

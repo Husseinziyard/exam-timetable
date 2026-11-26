@@ -71,7 +71,7 @@
       document.addEventListener("availability-saved", () => document.querySelector('[data-tab="avail"] .dot-badge')?.remove());
 
       let T = null, period = null;
-      let filt = { staff: "", room: "", date: "", batch: "" };
+      let filt = { staff: "", room: "", from: "", to: "", batch: "" };
 
       // ---------- helpers ----------
       const myHalls = () => mine && T ? T.halls.filter((h) => h.duties.some((d) => d.staffId === mine.id)) : [];
@@ -85,7 +85,7 @@
         return T.halls.filter((h) =>
           (!filt.staff || h.duties.some((d) => String(d.staffId) === filt.staff)) &&
           (!filt.room || String(h.room.id) === filt.room) &&
-          (!filt.date || h.date === filt.date) &&
+          (!filt.from || h.date >= filt.from) && (!filt.to || h.date <= filt.to) &&
           (!filt.batch || h.papers.some((p) => p.exam?.streams.some((b) => String(b.id) === filt.batch))));
       }
 
@@ -121,7 +121,7 @@
         const dates = [...new Set(T.halls.map((h) => h.date))].sort();
         const batches = timetableBatches(T);
         const hs = filtered();
-        const any = filt.staff || filt.room || filt.date || filt.batch;
+        const any = filt.staff || filt.room || filt.from || filt.to || filt.batch;
         const opt = (v, l, cur) => `<option value="${v}" ${String(v) === cur ? "selected" : ""}>${esc(l)}</option>`;
         const cell = (h, r) => h.duties.filter((d) => d.role === r).map((d) =>
           d.staffId === mine?.id ? `<mark>${esc(d.name)}</mark>` : esc(d.name)).join("<br>") || "—";
@@ -142,7 +142,8 @@
             <label><span>Lecturer</span><select data-f="staff"><option value="">Everyone</option>
               ${mine ? opt(mine.id, "★ Me", filt.staff) : ""}${staffList.filter(([id]) => id !== mine?.id).map(([id, n]) => opt(id, n, filt.staff)).join("")}</select></label>
             <label><span>Exam hall</span><select data-f="room"><option value="">All halls</option>${rooms.map(([id, n]) => opt(id, n, filt.room)).join("")}</select></label>
-            <label><span>Date</span><select data-f="date"><option value="">All dates</option>${dates.map((d) => opt(d, fmtDate(d), filt.date)).join("")}</select></label>
+            <label><span>From date</span><select data-f="from"><option value="">First day</option>${dates.filter((d) => !filt.to || d <= filt.to).map((d) => opt(d, fmtDate(d, { weekday: "short", day: "numeric", month: "short" }), filt.from)).join("")}</select></label>
+            <label><span>To date</span><select data-f="to"><option value="">Last day</option>${dates.filter((d) => !filt.from || d >= filt.from).map((d) => opt(d, fmtDate(d, { weekday: "short", day: "numeric", month: "short" }), filt.to)).join("")}</select></label>
             <label><span>Batch</span><select data-f="batch"><option value="">All batches</option>${batches.map((x) => opt(x.id, `Intake ${x.intake} · ${x.stream || x.degree}`, filt.batch)).join("")}</select></label>
             ${any ? '<button class="link" data-clear-f>Clear filters</button>' : ""}
           </div>
@@ -176,7 +177,7 @@
 
       // ---------- clicks / changes ----------
       panel.addEventListener("click", async (e) => {
-        if (e.target.closest("[data-clear-f]")) { filt = { staff: "", room: "", date: "", batch: "" }; return show("schedule"); }
+        if (e.target.closest("[data-clear-f]")) { filt = { staff: "", room: "", from: "", to: "", batch: "" }; return show("schedule"); }
         const dl = e.target.closest("[data-dl]");
         if (dl) {
           const kind = dl.dataset.dl;
@@ -186,7 +187,7 @@
             if (kind === "all") await pdfFacultySheet(T, period, { filename: "supervisor-invigilator-list.pdf" });
             if (kind === "shown") {
               const bits = [filt.staff && `Lecturer: ${T.name(Number(filt.staff))}`, filt.room && `Hall: ${T.halls.find((h) => String(h.room.id) === filt.room)?.room.name}`,
-                filt.date && `Date: ${fmtDate(filt.date)}`, filt.batch && `Batch: Intake ${T.batchById[filt.batch].intake} ${T.batchById[filt.batch].stream}`].filter(Boolean);
+                (filt.from || filt.to) && `Dates: ${filt.from ? fmtDate(filt.from) : "start"} to ${filt.to ? fmtDate(filt.to) : "end"}`, filt.batch && `Batch: Intake ${T.batchById[filt.batch].intake} ${T.batchById[filt.batch].stream}`].filter(Boolean);
               await pdfFacultySheet(T, period, { halls: filtered(), note: `Selection: ${bits.join(", ")}`, filename: "supervisor-invigilator-list-selection.pdf" });
             }
             if (kind === "batch") {
