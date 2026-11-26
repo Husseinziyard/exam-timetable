@@ -126,3 +126,20 @@ table.data mark { background: #d7ecdd; color: var(--green); font-weight: 600; pa
   .sw-pair { width: 100%; display: grid; grid-template-columns: 1fr 1fr; }
   .dl-bar .dl-batch { width: 100%; } .dl-bar select { flex: 1; min-width: 0; }
 }
+
+/* ===== Lecturer page: Downloads card + All sessions card ===== */
+.dl-card, .sched-card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px 22px; margin-bottom: 22px; }
+.sec-head { margin-bottom: 14px; }
+.sec-head h2 { font-size: 18px; margin: 0 0 4px; display: flex; align-items: center; gap: 8px; }
+.sec-head h2 i { color: var(--muted); font-size: 20px; }
+.sec-head p { margin: 0; }
+.sec-head.row { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.dl-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.dl-tile { display: flex; flex-direction: column; justify-content: space-between; gap: 12px; padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+.dl-tile h3 { font-size: 15px; margin: 0 0 4px; }
+.dl-tile p { font-size: 13px; color: var(--muted); margin: 0 0 8px; line-height: 1.45; }
+.dl-tile select { width: 100%; padding: 8px 10px; margin-top: 2px; }
+.dl-tile .btn { align-self: flex-start; }
+.sched-card .filters-row { margin-bottom: 14px; }
+.sched-card .table-wrap { margin: 0 -22px -20px; border-radius: 0 0 var(--radius) var(--radius); border-left: 0; border-right: 0; border-bottom: 0; }
+.sched-card .btn[disabled] { opacity: .45; cursor: not-allowed; }
