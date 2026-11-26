@@ -25,6 +25,11 @@ export async function requireRole(door) {
     location.replace(`login.html?role=${door}`);
     return null;
   }
+  // a login made by the admin starts with a temporary password: choose your own first
+  if (session.user.user_metadata?.must_change_password) {
+    location.replace(`password.html?first=1&next=${encodeURIComponent(location.pathname.split("/").pop() || "index.html")}`);
+    return null;
+  }
   const role = await getRole();
   if (!ALLOWED[door]?.includes(role)) {
     await supabase.auth.signOut();
@@ -44,5 +49,9 @@ export function setupHeader(user) {
   const who = document.getElementById("who");
   if (who) who.textContent = user.email;
   const btn = document.getElementById("logout");
-  if (btn) btn.addEventListener("click", signOut);
+  if (btn) {
+    btn.addEventListener("click", signOut);
+    if (!document.getElementById("pw-link")) btn.insertAdjacentHTML("beforebegin",
+      `<a id="pw-link" class="top-link" href="password.html?next=${encodeURIComponent(location.pathname.split("/").pop() || "index.html")}">Change password</a>`);
+  }
 }

@@ -50,6 +50,7 @@
     import { renderSection } from "./js/crud.js";
     import { renderOverview, renderTimetable } from "./js/timetable.js";
     import { renderAvailabilityAdmin } from "./js/availability.js";
+    import { renderLogins } from "./js/logins.js";
 
     const me = await requireRole("admin");
     if (me) {
@@ -63,7 +64,9 @@
       NAV.forEach((k) => nav.insertAdjacentHTML("beforeend",
         `<a href="#${k}" data-key="${k}" title="${SECTIONS[k].title}"><i class="ti ${ICONS[k]}" aria-hidden="true"></i><span>${SECTIONS[k].title}</span></a>`));
       nav.insertAdjacentHTML("beforeend", `<div class="nav-label">Before planning</div>
-        <a href="#availability" data-key="availability" title="Availability"><i class="ti ti-calendar-user" aria-hidden="true"></i><span>Availability</span></a>`);
+        <a href="#availability" data-key="availability" title="Availability"><i class="ti ti-calendar-user" aria-hidden="true"></i><span>Availability</span></a>
+        <div class="nav-label">Access</div>
+        <a href="#logins" data-key="logins" title="Staff logins"><i class="ti ti-key" aria-hidden="true"></i><span>Staff logins</span></a>`);
 
       // ----- sidebar: closed by default; the Overview icon opens it, click again to close -----
       const toggle = document.getElementById("toggle");
@@ -93,6 +96,7 @@
         if (SECTIONS[key]) await renderSection(content, key);
         else if (key.startsWith("timetable/")) await renderTimetable(content, Number(key.split("/")[1]), go);
         else if (key.split("/")[0] === "availability") await renderAvailabilityAdmin(content, Number(key.split("/")[1]) || null);
+        else if (key === "logins") await renderLogins(content);
         else await renderOverview(content, go);
         content.focus();
       }

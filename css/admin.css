@@ -618,3 +618,10 @@ details.sc-group .sc-row:last-of-type { border-bottom: 0; }
 table.data.compact th, table.data.compact td { padding: 6px 8px; font-size: 13px; vertical-align: middle; }
 table.data.compact input { padding: 6px 8px; font-size: 13px; width: 100%; min-width: 70px; }
 table.data.compact tr.bad td { background: #fff1ef; }
+.av-week legend .wk-allow { font-weight: 400; font-size: 13px; color: var(--muted); margin-left: 6px; }
+.av-week legend .wk-allow.warn-text { color: #9a4a12; font-weight: 600; }
+
+/* ----- Staff logins ----- */
+.seg.small button { border: 0; background: transparent; padding: 7px 12px; border-radius: 8px; font-size: 13px; font-weight: 600; color: var(--muted); cursor: pointer; }
+.seg.small button.on { background: var(--card); color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+code.pw { font-family: ui-monospace, Menlo, monospace; font-size: 14px; background: var(--bg); padding: 2px 8px; border-radius: 6px; letter-spacing: .5px; user-select: all; }

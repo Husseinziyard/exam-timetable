@@ -43,7 +43,7 @@ export function summarise(rows) {
 // =====================================================================
 // THE FORM — one row per exam day, two switches: Morning and Afternoon.
 // Green = I can come (the default). Grey = I can't come.
-//   limit:  most sessions this person may mark off (null = no limit)
+//   minAvail: sessions this person must stay available in every exam week (seniority; null = no rule)
 //   board:  who is already off, for the first-come-first-served check (lecturers only)
 // =====================================================================
 const GROUP_NAME = { SUP: "supervisors", INV: "invigilators", HA: "hall attendants" };
@@ -57,7 +57,7 @@ export function dutyGroup(s) {
 const isOff = (v, ses) => v === "ALL" || v === ses;
 
 export function availabilityForm({ container, round, days, existing = [], preference = "any", readOnly = false,
-  onSave, saveLabel = "Send my availability", limit = null, board = null, group = null }) {
+  onSave, saveLabel = "Send my availability", minAvail = null, board = null, group = null }) {
   const start = Object.fromEntries(existing.map((r) => [r.unavailable_date, r.session]));
   // people already off in each session (not me), per cover group
   const offNames = {};          // "date|AM" -> [{ name, group }]
@@ -95,7 +95,8 @@ export function availabilityForm({ container, round, days, existing = [], prefer
         ${readOnly ? "" : `<button type="button" class="link" data-reset>Mark all available</button>`}
       </div>
       <p class="av-limit"></p>
-      ${weeks.map((w) => `<fieldset class="av-week"><legend>Week of ${fmt(w[0], { day: "numeric", month: "long" })}</legend>
+      ${weeks.map((w, wi) => `<fieldset class="av-week" data-week="${wi}"><legend>Week of ${fmt(w[0], { day: "numeric", month: "long" })}
+        ${minAvail != null ? `<span class="wk-allow" data-allow="${wi}"></span>` : ""}</legend>
         ${w.map((d) => `<div class="av-day" data-day="${d}">
           <span class="av-date">${fmt(d)}</span>
           <div class="sw-pair">${sw(d, "AM")}${sw(d, "PM")}</div>
@@ -109,6 +110,10 @@ export function availabilityForm({ container, round, days, existing = [], prefer
     </form>`;
   const form = container.querySelector("form");
   const offCount = () => form.querySelectorAll("input[data-d]:not(:checked)").length;
+  // each week: sessions in it, how many must stay available, how many may be taken off
+  const weekOf = Object.fromEntries(weeks.flatMap((w, wi) => w.map((d) => [d, wi])));
+  const weekRule = (wi) => { const total = weeks[wi].length * 2, keep = Math.min(minAvail ?? 0, total); return { total, keep, maxOff: total - keep }; };
+  const offInWeek = (wi) => [...form.querySelectorAll("input[data-d]:not(:checked)")].filter((i) => weekOf[i.dataset.d] === wi).length;
   const refresh = () => {
     const n = offCount();
     form.querySelectorAll("input[data-d]").forEach((i) => {
@@ -117,15 +122,22 @@ export function availabilityForm({ container, round, days, existing = [], prefer
       if (!lab.classList.contains("full")) lab.querySelector("small").textContent = i.checked ? "Available" : "Can't come";
     });
     form.querySelectorAll(".av-day").forEach((row) => row.classList.toggle("has-off", !!row.querySelector("input[data-d]:not(:checked)")));
-    container.querySelector(".av-limit").innerHTML = limit != null
-      ? `<span class="${n >= limit ? "warn-text" : ""}">Sessions off: <b>${n}</b> of <b>${limit}</b> allowed</span>`
-      : n ? `${n} session${n > 1 ? "s" : ""} marked “can't come”.` : "You're available for every session.";
+    if (minAvail != null) weeks.forEach((w, wi) => {
+      const r = weekRule(wi), off = offInWeek(wi), el = form.querySelector(`[data-allow="${wi}"]`);
+      if (el) { el.textContent = `· ${off} of ${r.maxOff} off allowed`; el.classList.toggle("warn-text", off >= r.maxOff); }
+    });
+    container.querySelector(".av-limit").innerHTML = (minAvail != null
+      ? `Your grade must stay available for at least <b>${minAvail}</b> session${minAvail === 1 ? "" : "s"} in each exam week. `
+      : "") + (n ? `${n} session${n > 1 ? "s" : ""} marked “can't come”.` : "You're available for every session.");
   };
   form.addEventListener("change", (e) => {
     const i = e.target;
-    if (i.matches("input[data-d]") && !i.checked && limit != null && offCount() > limit) {
-      i.checked = true;
-      flash(`You can mark at most ${limit} session${limit === 1 ? "" : "s"} off. Switch another one back on first.`, "error");
+    if (i.matches("input[data-d]") && !i.checked && minAvail != null) {
+      const wi = weekOf[i.dataset.d], r = weekRule(wi);
+      if (offInWeek(wi) > r.maxOff) {
+        i.checked = true;
+        flash(`In the week of ${fmt(weeks[wi][0], { day: "numeric", month: "short" })} you must stay available for at least ${r.keep} session${r.keep === 1 ? "" : "s"}, so at most ${r.maxOff} can be off.`, "error");
+      }
     }
     refresh();
   });
@@ -217,7 +229,7 @@ export async function renderMyAvailability(panel, me) {
   ]);
   const answered = resp[0];
   const editable = roundEditable(r);
-  const limit = r.max_off?.[me.grade] ?? null;
+  const minAvail = r.min_available?.[me.grade] ?? null;
   const left = r.deadline ? daysLeft(r.deadline) : null;
   panel.innerHTML = `
     <div class="av-head">
@@ -236,7 +248,7 @@ export async function renderMyAvailability(panel, me) {
     container: panel.querySelector("#av-form"), round: r, days, existing: mine,
     preference: answered?.preference || "any", readOnly: !editable,
     saveLabel: answered ? "Update my availability" : "Send my availability",
-    limit, board: boardRes.data, group: dutyGroup(me),
+    minAvail, board: boardRes.data, group: dutyGroup(me),
     onSave: async (rows, pref) => {
       try {
         const problems = await saveAnswers(r.id, me.id, rows, pref);
@@ -350,7 +362,7 @@ export async function renderAvailabilityAdmin(root, roundId = null) {
             · ${!round.is_open ? '<span class="badge hold">Closed</span>' : roundEditable(round) ? '<span class="badge active">Open</span>' : '<span class="badge hold">Deadline passed</span>'}</p>
           <p class="small muted">${round.emailed_at ? `Emailed to staff ${new Date(round.emailed_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}` : "Not emailed yet"}
             ${round.reminded_at ? ` · reminder sent ${new Date(round.reminded_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}` : ""}
-            · ${H ? `${H} halls per session` : "no session cap"} · limits: ${Object.entries(round.max_off || {}).map(([g, n]) => `${GRADE[g] || g} ${n}`).join(", ")}</p>
+            · ${H ? `${H} halls per session` : "no session cap"} · must stay available per week: ${Object.entries(round.min_available || {}).map(([g, n]) => `${GRADE[g] || g} ${n}`).join(", ")}</p>
         </div>
         <div class="tt-actions">
           ${round.emailed_at ? `<button class="btn" data-mail="reminder" ${noAnswer ? "" : "disabled"}><i class="ti ti-bell"></i> Remind ${noAnswer} not answered</button>`
@@ -468,8 +480,10 @@ async function deleteRound(r, answered) {
 // Create a request, or change one's settings
 async function roundDialog(root, round = null) {
   const rooms = await q(supabase.from("rooms").select("id,on_hold"));
-  const defaults = { PROF: 6, SL1: 6, SL2: 4, LECT: 4, INSTR: 4, MIL: 4, HA: 2 };
-  const max = { ...defaults, ...(round?.max_off || {}) };
+  // defaults follow the weekly duty limits (Settings), e.g. Prof 2, SL Gr I 2, SL Gr II 5, Lecturer 7, others 8
+  const { data: lim } = await supabase.from("settings").select("value").eq("key", "weekly_limits").maybeSingle();
+  const defaults = { PROF: 2, SL1: 2, SL2: 5, LECT: 7, INSTR: 8, MIL: 8, HA: 8, ...(lim?.value || {}) };
+  const max = { ...defaults, ...(round?.min_available || {}) };
   const halls = round?.halls_per_session ?? rooms.filter((r) => !r.on_hold).length;
   const dlg = document.createElement("dialog");
   dlg.className = "form-dialog";
@@ -483,8 +497,9 @@ async function roundDialog(root, round = null) {
         <div><label for="r-dead">Deadline (last day to answer) *</label><input id="r-dead" type="date" required value="${round?.deadline || ""}"></div>
         <div><label for="r-halls">Halls used in a busy session</label><input id="r-halls" type="number" min="0" value="${halls}"></div>
       </div>
-      <p class="gen-sub">Most sessions each person may mark “can't come” (whole day = 2)</p>
-      <div class="limits">${Object.entries(GRADE).map(([k, l]) => `<label>${l}<input type="number" min="0" max="40" data-max="${k}" value="${max[k]}"></label>`).join("")}</div>
+      <p class="gen-sub">Each grade must stay available for at least this many sessions in every exam week (out of 10)</p>
+      <div class="limits">${Object.entries(GRADE).map(([k, l]) => `<label>${l}<input type="number" min="0" max="10" data-max="${k}" value="${max[k] ?? 8}"></label>`).join("")}</div>
+      <p class="small muted">E.g. Professor 2: a professor may mark most of a week “can't come”, as long as 2 sessions stay open. A short week (fewer exam days) asks for no more than it has.</p>
       <p class="small muted">First come, first served: a session closes for a group when too few would be left —
         supervisors need 1 per hall, invigilators 1.5 per hall, hall attendants 1 per hall. Set halls to 0 to switch this off.</p>
       ${round ? "" : `<label class="check"><input type="checkbox" id="r-mail" checked> Email all staff now (from the exam office Gmail)</label>`}
@@ -504,7 +519,7 @@ async function roundDialog(root, round = null) {
     const row = {
       name: v("#r-name").trim(), start_date: v("#r-start"), end_date: v("#r-end"), deadline: v("#r-dead"),
       halls_per_session: Number(v("#r-halls")) || 0,
-      max_off: Object.fromEntries([...dlg.querySelectorAll("[data-max]")].map((i) => [i.dataset.max, Number(i.value) || 0])),
+      min_available: Object.fromEntries([...dlg.querySelectorAll("[data-max]")].map((i) => [i.dataset.max, Number(i.value) || 0])),
     };
     try {
       if (round) {
