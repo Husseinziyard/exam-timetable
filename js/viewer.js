@@ -250,6 +250,15 @@ const pad2 = (n) => String(n).padStart(2, "0");
 const dmy = (iso) => iso.split("-").reverse().join(".");
 const mondayOf = (iso) => { const d = new Date(iso + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)); return d.toISOString().slice(0, 10); };
 
+// Hall attendants are shown by initials: "Hall attendant FF" -> "FF", "Mr. KG Silva" -> "KGS"
+export function shortName(name) {
+  const n = String(name || "").replace(/^hall\s*attendant\s*/i, "").trim();
+  if (n.length <= 4) return n.toUpperCase();
+  const words = n.replace(/^(mr|mrs|ms|miss|dr|prof|rev)\.?\s+/i, "").replace(/\(.*?\)/g, "").trim().split(/\s+/);
+  // a word that is already initials ("KG") is kept whole; other words give their first letter
+  return words.map((w) => (/^[A-Z]{2,4}$/.test(w) ? w : w[0] || "")).join("").toUpperCase();
+}
+
 // Rows of the sheet for the given hall sessions (already filtered if needed)
 export function facultyRows(T, halls) {
   const rows = [];
@@ -259,6 +268,7 @@ export function facultyRows(T, halls) {
     firstIntake(b) - firstIntake(a) || firstStream(a).localeCompare(firstStream(b)) || a.room.name.localeCompare(b.room.name, undefined, { numeric: true }));
   for (const h of sorted) {
     const staff = (r) => h.duties.filter((d) => d.role === r).map((d, i, all) => (all.length > 1 ? `${i + 1}. ` : "") + d.name).join("\n");
+    const has = () => h.duties.filter((d) => d.role === "ATTENDANT").map((d) => shortName(d.name)).join("\n");
     const streamKey = (e) => (e?.streams[0]?.stream || e?.repStream || e?.repeatOf?.streams[0]?.stream || "") + (e?.isRepeatPaper ? "~" : "");
     const papers = [...h.papers].sort((a, b) => streamKey(a.exam).localeCompare(streamKey(b.exam)));
     for (const p of papers) {
@@ -272,7 +282,7 @@ export function facultyRows(T, halls) {
           streams: e.repStream || bs.map((b) => b.stream).join("\n") || "Repeat",
           subject: `${m.name}\n[${m.code}]\n[${pad2(m.duration_hours || 2)}hr Paper]`,
           stu: `R${pad2(p.seats)}`, count: pad2(p.seats), total: String(h.students), hall: h.room.name,
-          sup: staff("SUPERVISOR"), inv: staff("INVIGILATOR"), ha: staff("ATTENDANT"),
+          sup: staff("SUPERVISOR"), inv: staff("INVIGILATOR"), ha: has(),
         });
         continue;
       }
@@ -286,7 +296,7 @@ export function facultyRows(T, halls) {
         subject: `${m.name}\n[${m.code}]\n[${pad2(m.duration_hours || 3)} Hours]`,
         stu: one && rep ? `P${p.seats - rep} + R${pad2(rep)}` : `P${p.seats}`,
         count: String(p.seats), total: String(h.students), hall: h.room.name,
-        sup: staff("SUPERVISOR"), inv: staff("INVIGILATOR"), ha: staff("ATTENDANT"),
+        sup: staff("SUPERVISOR"), inv: staff("INVIGILATOR"), ha: has(),
       });
     }
   }
@@ -368,6 +378,18 @@ export async function pdfFacultySheet(T, period, { halls = T.halls, note = "", f
   y += 58;
   doc.setFont("times", "normal"); doc.text("................................................", M, y);
   doc.setFont("times", "bold"); doc.text("Dean - FMSH", M, y + 13);
+  doc.setFont("times", "normal");
+  // hall attendants key: initials -> full name
+  const haNames = [...new Set(halls.flatMap((h) => h.duties.filter((d) => d.role === "ATTENDANT").map((d) => d.name)))]
+    .filter((n) => shortName(n) !== n).sort((a, b) => shortName(a).localeCompare(shortName(b)));
+  if (haNames.length) {
+    doc.setFont("times", "bold"); doc.text("HALL ATTENDANTS -", W / 2 + 20, y + 40);
+    doc.setFont("times", "normal");
+    haNames.forEach((n, i) => {
+      const col = i % 2, row = Math.floor(i / 2);
+      doc.text(`${shortName(n)} - ${n}`, W / 2 + 20 + col * 125, y + 54 + row * 11);
+    });
+  }
   doc.setFont("times", "normal");
   doc.text("Distribution  -", M, y + 40);
   ["All HoDs - FMSH", "All Supervisors & Invigilators", "All Hall Attendants", "DR - Examinations"].forEach((t, i) => doc.text(t, M + 90, y + 40 + i * 12));
