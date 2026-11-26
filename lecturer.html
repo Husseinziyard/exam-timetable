@@ -61,7 +61,7 @@
       const periods = await publishedPeriods().catch(() => []);
 
       // an open availability request still waiting for my answer?
-      const { data: openRounds } = await supabase.from("availability_rounds").select("id").eq("is_open", true);
+      const { data: openRounds } = await supabase.from("availability_rounds").select("id").eq("is_open", true).gte("end_date", todayIso());
       let pendingAnswer = false;
       if (mine && openRounds?.length) {
         const { data: done } = await supabase.from("availability_responses").select("round_id").eq("lecturer_id", mine.id).in("round_id", openRounds.map((r) => r.id));

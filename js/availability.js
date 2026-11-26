@@ -214,8 +214,10 @@ export async function renderMyAvailability(panel, me) {
   if (!me) { panel.innerHTML = `<p class="muted">Your email isn't linked to a staff record, so you can't answer yet.</p>`; return; }
   panel.innerHTML = `<p class="loading">Loading…</p>`;
   const rounds = await q(supabase.from("availability_rounds").select("*").order("start_date", { ascending: false }));
-  const open = rounds.filter((r) => r.is_open);
-  const r = open[0] || rounds[0];
+  // an open form first; a closed one stays visible (read-only) only until its exams are over
+  const today = new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
+  const open = rounds.filter((r) => r.is_open && r.end_date >= today);
+  const r = open[0] || rounds.find((x) => x.end_date >= today);
   if (!r) {
     panel.innerHTML = `<div class="empty table-wrap"><p><strong>No availability request right now.</strong></p>
       <p class="muted">Before each exam period the exam office asks when you can't come for exam duties. You'll get an email, and the form will appear here.</p></div>`;
@@ -238,6 +240,7 @@ export async function renderMyAvailability(panel, me) {
         <p class="muted">Exam days ${fmt(r.start_date, { day: "numeric", month: "long" })} – ${fmt(r.end_date, { day: "numeric", month: "long", year: "numeric" })}</p>
         ${r.deadline ? `<p class="deadline ${editable ? (left <= 2 ? "soon" : "") : "past"}"><i class="ti ti-clock"></i>
           ${editable ? `Answer by <b>${fmt(r.deadline, { weekday: "long", day: "numeric", month: "long" })}</b> · ${left === 0 ? "today is the last day" : `${left} day${left === 1 ? "" : "s"} left`}. You can change your answer until then.`
+            : !r.is_open && today <= r.deadline ? "Closed by the exam office."
             : `Closed on ${fmt(r.deadline, { weekday: "long", day: "numeric", month: "long" })}.`}</p>` : ""}
       </div>
       <span class="badge ${answered ? "active" : "hold"}">${answered ? `Sent ${new Date(answered.submitted_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : "Not answered yet"}</span>
