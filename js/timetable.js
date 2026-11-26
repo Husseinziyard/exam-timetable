@@ -185,7 +185,6 @@ export async function loadTimetable(periodId) {
 // THE TIMETABLE PAGE
 // =====================================================================
 export async function renderTimetable(root, periodId, go, view = "streams", ui = {}) {
-  const right = ui.right === undefined ? "scale" : ui.right;     // the Load scale is open by default
   const scrollY = root.scrollTop;
   if (!ui.keep) root.innerHTML = `<p class="loading">Loading timetable…</p>`;
   let T;
@@ -206,6 +205,9 @@ export async function renderTimetable(root, periodId, go, view = "streams", ui =
     slotGroup: Object.fromEntries(Object.values(T.moduleById).filter((m) => m.slot_group).map((m) => [m.id, m.slot_group])),
   });
   const n = (lvl) => checks.filter((c) => c.level === lvl).length;
+  // the Load scale opens by itself only when someone is over their weekly limit
+  const overLimit = checks.some((c) => /sessions in the week of/.test(c.text || c.message || c.msg || ""));
+  const right = ui.right === undefined ? (overLimit ? "scale" : null) : ui.right;
   const p = T.period;
   const live = p.status === "published";
   if (live) ui.edit = false;                       // the live version is never edited directly
@@ -220,21 +222,22 @@ export async function renderTimetable(root, periodId, go, view = "streams", ui =
 
   root.innerHTML = `
     <div class="tt-head">
-      <div>
+      <div class="tt-top">
         <a class="back-link" href="#overview">← All timetables</a>
+        <div class="tt-actions">
+          <button class="btn light" id="download" title="Download PDFs or print"><i class="ti ti-download"></i> Download</button>
+          ${live ? `<button class="btn light" id="edit-copy"><i class="ti ti-pencil"></i> ${pendingCopy ? "Continue editing" : "Edit"}</button>`
+            : `<button class="btn light toggle ${ui.edit ? "on" : ""}" id="edit-toggle" aria-pressed="${!!ui.edit}"><i class="ti ti-pencil"></i> Edit</button>`}
+          <button class="btn light toggle ${right === "scale" ? "on" : ""}" id="scale-toggle" aria-pressed="${right === "scale"}" title="Load scale"><i class="ti ti-chart-bar"></i> Load</button>
+          <button class="btn light toggle ${right === "ai" ? "on" : ""}" id="ai-toggle" aria-pressed="${right === "ai"}" title="AI assistant"><i class="ti ti-sparkles"></i> AI</button>
+          ${live ? "" : `<button class="btn" id="publish"><i class="ti ti-send"></i> ${original ? "Republish…" : "Publish…"}</button>`}
+        </div>
+      </div>
+      <div>
         <h1 class="page-title">${esc(p.name)}</h1>
         <p class="page-sub">${fmtDate(p.start_date, { day: "numeric", month: "long" })} – ${fmtDate(p.end_date, { day: "numeric", month: "long", year: "numeric" })}
           · ${T.exams.length} papers · ${new Set(T.exams.map((e) => e.date)).size} exam days · ${T.halls.length} hall sessions
           · ${p.status === "published" ? '<span class="badge active">Published</span>' : '<span class="badge draft">Draft</span>'}</p>
-      </div>
-      <div class="tt-actions">
-        <button class="btn light" id="download"><i class="ti ti-download"></i> Download</button>
-        <button class="btn light" id="print"><i class="ti ti-printer"></i> Print</button>
-        ${live ? `<button class="btn light" id="edit-copy"><i class="ti ti-pencil"></i> ${pendingCopy ? "Continue editing" : "Edit"}</button>`
-          : `<button class="btn light toggle ${ui.edit ? "on" : ""}" id="edit-toggle" aria-pressed="${!!ui.edit}"><i class="ti ti-pencil"></i> Edit</button>`}
-        <button class="btn light toggle ${right === "scale" ? "on" : ""}" id="scale-toggle" aria-pressed="${right === "scale"}"><i class="ti ti-chart-bar"></i> Load scale</button>
-        <button class="btn light toggle ${right === "ai" ? "on" : ""}" id="ai-toggle" aria-pressed="${right === "ai"}"><i class="ti ti-sparkles"></i> AI assistant</button>
-        ${live ? "" : `<button class="btn" id="publish"><i class="ti ti-send"></i> ${original ? "Republish…" : "Publish…"}</button>`}
       </div>
     </div>
 
@@ -305,7 +308,6 @@ export async function renderTimetable(root, periodId, go, view = "streams", ui =
   root.classList.toggle("drawer-right-open", !!right);
   syncDrawerPosition();
 
-  root.querySelector("#print").addEventListener("click", () => window.print());
   root.querySelector("#download").addEventListener("click", () => downloadDialog(periodId, p));
   const rerender = (extra = {}) => renderTimetable(root, periodId, go, view, { ...ui, keep: true, ...extra });
   root.querySelector("#edit-toggle")?.addEventListener("click", () => rerender({ edit: !ui.edit, sel: null }));
@@ -538,6 +540,8 @@ async function downloadDialog(periodId, period) {
           <span><b>Supervisor / invigilator list (whole timetable)</b><small>The faculty layout: week by week, every hall with papers, students, supervisor, invigilators and hall attendant.</small></span></label>
         <label class="dl-opt"><input type="radio" name="dl" value="staff">
           <span><b>Staff duty lists</b><small>One page per staff member: where and when they must be.</small></span></label>
+        <label class="dl-opt"><input type="radio" name="dl" value="print">
+          <span><b>Print this page</b><small>Prints the view on screen (By stream / Halls &amp; staff / Staff load).</small></span></label>
       </div>
       <div class="dialog-actions"><button type="button" class="btn light" value="cancel">Cancel</button><button class="btn"><i class="ti ti-download"></i> Download PDF</button></div>
     </form>`;
@@ -548,6 +552,7 @@ async function downloadDialog(periodId, period) {
   dlg.querySelector("form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const kind = dlg.querySelector('[name="dl"]:checked').value;
+    if (kind === "print") { dlg.close(); setTimeout(() => window.print(), 200); return; }
     const btn = dlg.querySelector("button:not([value])");
     btn.disabled = true; btn.textContent = "Making the PDF…";
     try {
