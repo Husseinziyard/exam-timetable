@@ -140,7 +140,7 @@ export async function openGenerateDialog(onSaved) {
 
       <h3 class="gen-h">Rules</h3>
       <div class="grid">
-        <div><label for="g-thr">Second invigilator when a hall has more than</label><input id="g-thr" type="number" min="1" value="${Number(setting.second_invigilator_above ?? 55)}"></div>
+        <div><label for="g-thr">Second invigilator when a hall has more than</label><input id="g-thr" type="number" min="1" value="${Number(setting.second_invigilator_above ?? 60)}"></div>
         <div><label for="g-gap">Study days between a stream's exams (at least)</label><input id="g-gap" type="number" min="0" max="5" value="1"></div>
       </div>
       <p class="gen-sub">Most exam sessions per week (out of 10) — the timetable tries to stay under these and warns if it can't</p>
