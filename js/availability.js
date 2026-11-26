@@ -268,6 +268,11 @@ async function sendMail(round, kind) {
 // ADMIN: the Availability page
 // =====================================================================
 export async function renderAvailabilityAdmin(root, roundId = null) {
+  // one set of page listeners at a time (the page area is shared, so old ones must go)
+  root._pageAbort?.abort();
+  root._pageAbort = new AbortController();
+  const once = { signal: root._pageAbort.signal };
+  const on = (type, fn) => root.addEventListener(type, fn, once);
   root.innerHTML = `<p class="loading">Loading…</p>`;
   const [rounds, staff, responses, answers] = await Promise.all([
     q(supabase.from("availability_rounds").select("*").order("start_date", { ascending: false })),
@@ -286,7 +291,7 @@ export async function renderAvailabilityAdmin(root, roundId = null) {
       <p class="page-sub">Before each exam period, ask staff which days or sessions they can't come. The timetable generator respects their answers automatically.</p>
       <div class="toolbar"><span class="spacer"></span><button class="btn" data-new><i class="ti ti-send"></i> New availability request</button></div>
       ${rounds.length ? `<div class="table-wrap"><table class="data">
-        <thead><tr><th>Request</th><th>Exam days</th><th>Deadline</th><th>Answers</th><th>Status</th></tr></thead>
+        <thead><tr><th>Request</th><th>Exam days</th><th>Deadline</th><th>Answers</th><th>Status</th><th></th></tr></thead>
         <tbody>${rounds.map((r) => {
           const n = responses.filter((x) => x.round_id === r.id).length;
           return `<tr data-round="${r.id}" tabindex="0" title="Open">
@@ -294,10 +299,16 @@ export async function renderAvailabilityAdmin(root, roundId = null) {
             <td>${fmt(r.start_date, { day: "numeric", month: "short" })} – ${fmt(r.end_date, { day: "numeric", month: "short", year: "numeric" })}</td>
             <td>${r.deadline ? fmt(r.deadline) : "—"}</td>
             <td><div class="progress"><span style="width:${Math.round((n / Math.max(1, active.length)) * 100)}%"></span></div> ${n} of ${active.length}</td>
-            <td>${!r.is_open ? '<span class="badge hold">Closed</span>' : roundEditable(r) ? '<span class="badge active">Open</span>' : '<span class="badge hold">Deadline passed</span>'}</td></tr>`;
+            <td>${!r.is_open ? '<span class="badge hold">Closed</span>' : roundEditable(r) ? '<span class="badge active">Open</span>' : '<span class="badge hold">Deadline passed</span>'}</td>
+            <td class="actions"><button class="link danger" data-del-round="${r.id}" title="Delete this request and its answers">Delete</button></td></tr>`;
         }).join("")}</tbody></table></div>`
       : `<div class="empty table-wrap"><p><strong>No requests yet.</strong></p><p class="muted">Click “New availability request” before planning the next exam period.</p></div>`}`;
     root.querySelector("[data-new]").addEventListener("click", () => roundDialog(root));
+    root.querySelectorAll("[data-del-round]").forEach((b) => b.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const r = rounds.find((x) => x.id === Number(b.dataset.delRound));
+      if (await deleteRound(r, responses.filter((x) => x.round_id === r.id).length)) renderAvailabilityAdmin(root);
+    }));
     root.querySelectorAll("[data-round]").forEach((tr) => {
       tr.addEventListener("click", () => (location.hash = `availability/${tr.dataset.round}`));
       tr.addEventListener("keydown", (e) => { if (e.key === "Enter") tr.click(); });
@@ -346,6 +357,7 @@ export async function renderAvailabilityAdmin(root, roundId = null) {
             : `<button class="btn" data-mail="invite"><i class="ti ti-mail"></i> Email all staff</button>`}
           <button class="btn light" data-mail="test" title="Send the email only to yourself, to check the set-up"><i class="ti ti-mail-check"></i> Test email</button>
           <button class="btn light" data-settings><i class="ti ti-settings"></i> Settings</button>
+          <button class="btn light danger" data-del-this title="Delete this request and all its answers"><i class="ti ti-trash"></i> Delete</button>
           <button class="btn light" data-toggle>${round.is_open ? '<i class="ti ti-lock"></i> Close' : '<i class="ti ti-lock-open"></i> Reopen'}</button>
         </div>
       </div>
@@ -377,7 +389,7 @@ export async function renderAvailabilityAdmin(root, roundId = null) {
   }
   draw();
 
-  root.addEventListener("change", async (e) => {
+  on("change", async (e) => {
     if (e.target.name === "f") { filter = e.target.value; draw(); }
     if (e.target.matches("[data-import]") && e.target.files[0]) {
       await importGoogleForm(e.target.files[0], round, active);
@@ -385,7 +397,7 @@ export async function renderAvailabilityAdmin(root, roundId = null) {
       renderAvailabilityAdmin(root, round.id);
     }
   });
-  root.addEventListener("click", async (e) => {
+  on("click", async (e) => {
     const mail = e.target.closest("[data-mail]");
     if (mail) {
       const kind = mail.dataset.mail;
@@ -402,6 +414,10 @@ export async function renderAvailabilityAdmin(root, roundId = null) {
         `Log in here with your university email and open the “Availability” tab:\n${link}\n\nThank you.`;
       try { await navigator.clipboard.writeText(msg); flash("Message copied — paste it into an email or WhatsApp."); }
       catch { prompt("Copy this message:", msg); }
+    }
+    if (e.target.closest("[data-del-this]")) {
+      if (await deleteRound(round, Object.keys(resp).length)) location.hash = "availability";
+      return;
     }
     if (e.target.closest("[data-toggle]")) {
       await q(supabase.from("availability_rounds").update({ is_open: !round.is_open }).eq("id", round.id));
@@ -434,6 +450,19 @@ export async function renderAvailabilityAdmin(root, roundId = null) {
       });
     }
   });
+}
+
+// Delete a request with all its answers (asks first)
+async function deleteRound(r, answered) {
+  const warn = answered
+    ? `Delete “${r.name}”?\n\n${answered} staff answered it — their answers are deleted too and the timetable generator will no longer see them. This cannot be undone.`
+    : `Delete “${r.name}”? This cannot be undone.`;
+  if (!confirm(warn)) return false;
+  if (answered && prompt("Type DELETE to confirm.")?.trim().toUpperCase() !== "DELETE") return false;
+  try { await q(supabase.from("availability_rounds").delete().eq("id", r.id)); }
+  catch (err) { flash(err.message || String(err), "error"); return false; }
+  flash("Availability request deleted.");
+  return true;
 }
 
 // Create a request, or change one's settings
