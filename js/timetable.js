@@ -156,7 +156,7 @@ export async function loadTimetable(periodId) {
   const leaveBy = {};
   leave.forEach((l) => (leaveBy[l.lecturer_id] ||= []).push([l.start_date, l.end_date]));
   const examById = Object.fromEntries(exams.map((e) => [e.id, e]));
-  const threshold = Number(period.options?.threshold ?? settings.find((s) => s.key === "second_invigilator_above")?.value ?? 60);
+  const threshold = Number(period.options?.threshold ?? settings.find((s) => s.key === "second_invigilator_above")?.value ?? 55);
 
   const hallList = halls.map((h) => ({
     id: h.id, date: h.exam_date, session: h.session, roomId: h.room_id, locked: h.locked,

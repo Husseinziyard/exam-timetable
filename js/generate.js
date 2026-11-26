@@ -140,7 +140,7 @@ export async function openGenerateDialog(onSaved) {
 
       <h3 class="gen-h">Rules</h3>
       <div class="grid">
-        <div><label for="g-thr">Second invigilator when a hall has more than</label><input id="g-thr" type="number" min="1" value="${Number(setting.second_invigilator_above ?? 60)}"></div>
+        <div><label for="g-thr">Second invigilator when a hall has more than</label><input id="g-thr" type="number" min="1" value="${Number(setting.second_invigilator_above ?? 55)}"></div>
         <div><label for="g-gap">Study days between a stream's exams (at least)</label><input id="g-gap" type="number" min="0" max="5" value="1"></div>
       </div>
       <p class="gen-sub">Most exam sessions per week (out of 10) — the timetable tries to stay under these and warns if it can't</p>
@@ -249,7 +249,7 @@ export async function openGenerateDialog(onSaved) {
 
     const opts = {
       days: workingDays(s, en, holidays.map((h) => h.holiday_date)),
-      threshold: Number($("#g-thr").value) || 60,
+      threshold: Number($("#g-thr").value) || 55,
       minGap: Number($("#g-gap").value) || 0,
       seed: Date.now() % 100000,
     };
@@ -260,9 +260,11 @@ export async function openGenerateDialog(onSaved) {
     const newLimits = { ...lim, MIL: lim.INSTR, HA: lim.INSTR };
     try {      // remember the limits for next time (a failure here must not stop the timetable)
       const { error } = await supabase.from("settings").upsert(
-        { key: "weekly_limits", value: newLimits, note: "Most exam sessions per week (out of 10) for each grade" }, { onConflict: "key" });
+        [{ key: "weekly_limits", value: newLimits, note: "Most exam sessions per week (out of 10) for each grade" },
+         { key: "second_invigilator_above", value: Number($("#g-thr").value) || 55, note: "A hall with more students than this gets 2 invigilators" }],
+        { onConflict: "key" });
       if (error) throw error;
-    } catch (err) { toast(`Weekly limits were used but not saved for next time: ${err.message || err}`, "error"); }
+    } catch (err) { toast(`Limits were used but not saved for next time: ${err.message || err}`, "error"); }
 
     // repeat students: counts + old papers that sit with a current paper
     const resolved = resolveNow(repEditor.rows);
