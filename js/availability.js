@@ -14,6 +14,7 @@ const fmt = (s, o = { weekday: "short", day: "numeric", month: "short" }) =>
 const CHOICES = [["", "Available"], ["AM", "Morning off"], ["PM", "Afternoon off"], ["ALL", "Whole day off"]];
 const PREFS = [["any", "No preference"], ["AM", "Mornings"], ["PM", "Afternoons"]];
 const GRADE = { PROF: "Professor", SL1: "SL Gr. I", SL2: "SL Gr. II", LECT: "Lecturer", INSTR: "Instructor", MIL: "Military", HA: "Hall attendant" };
+const nm = (s) => `${s.title ? s.title + " " : ""}${s.full_name}`;
 
 async function q(promise) {
   const { data, error } = await promise;
@@ -277,9 +278,11 @@ export async function renderMyAvailability(panel, me) {
 }
 
 // ----- emails (Supabase function "send-mail") -----
-async function sendMail(round, kind) {
+async function sendMail(round, kind, lecturerIds = null) {
   const site = new URL(".", location.href).href;
-  const { data, error } = await supabase.functions.invoke("send-mail", { body: { round_id: round.id, kind, site } });
+  const body = { round_id: round.id, kind, site };
+  if (lecturerIds) body.lecturer_ids = lecturerIds;
+  const { data, error } = await supabase.functions.invoke("send-mail", { body });
   if (error) {
     let m = error.message;
     try { m = (await error.context?.json())?.error || m; } catch {}
@@ -287,6 +290,98 @@ async function sendMail(round, kind) {
   }
   if (data?.error) throw new Error(data.error);
   return data;
+}
+
+// ----- Choose & send: pick exactly who gets the email -----
+function pickAndSend(root, round, active, resp) {
+  const faculties = [...new Set(active.map((x) => x.faculty).filter(Boolean))].sort();
+  const grades = Object.keys(GRADE).filter((g) => active.some((x) => x.grade === g));
+  const chosen = new Set(active.filter((x) => x.email && !resp[x.id]).map((x) => x.id));   // start: everyone not answered
+  const f = { ans: "all", grade: "", faculty: "", text: "" };
+  const dlg = document.createElement("dialog");
+  dlg.className = "form-dialog wide";
+  dlg.innerHTML = `
+    <form method="dialog" class="pick-mail">
+      <h2>Choose who gets the email</h2>
+      <p class="small muted">${esc(round.name)} · Tick the people to email. Filters only change what's listed; ticks stay.</p>
+      <div class="pm-filters">
+        <label>Answered<select data-pf="ans"><option value="all">Everyone</option><option value="no">Not answered</option><option value="yes">Answered</option></select></label>
+        <label>Grade<select data-pf="grade"><option value="">All grades</option>${grades.map((g) => `<option value="${g}">${esc(GRADE[g])}</option>`).join("")}</select></label>
+        <label>Faculty<select data-pf="faculty"><option value="">All faculties</option>${faculties.map((x) => `<option>${esc(x)}</option>`).join("")}</select></label>
+        <label>Search<input type="search" data-pf="text" placeholder="Name or email"></label>
+      </div>
+      <div class="pm-bar">
+        <button type="button" class="btn light small" data-pall>Tick all shown</button>
+        <button type="button" class="btn light small" data-pnone>Untick all shown</button>
+        <span class="spacer"></span>
+        <span class="small" data-pcount></span>
+      </div>
+      <div class="pm-list" data-plist></div>
+      <div class="pm-kind">
+        <span class="small muted">Message</span>
+        <label class="check"><input type="radio" name="pk" value="invite" ${round.emailed_at ? "" : "checked"}> Request (first email)</label>
+        <label class="check"><input type="radio" name="pk" value="reminder" ${round.emailed_at ? "checked" : ""}> Reminder</label>
+      </div>
+      <p class="msg error form-msg"></p>
+      <div class="dialog-actions">
+        <button type="button" class="btn light" data-ptest title="Send this message only to you, to see how it looks"><i class="ti ti-mail-check"></i> Send a test to me</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn light" value="cancel">Cancel</button>
+        <button type="button" class="btn" data-psend><i class="ti ti-send"></i> Send</button>
+      </div>
+    </form>`;
+  document.body.appendChild(dlg); dlg.showModal();
+  dlg.addEventListener("close", () => dlg.remove());
+  const shown = () => active.filter((x) =>
+    (f.ans === "all" || (f.ans === "yes" ? resp[x.id] : !resp[x.id])) &&
+    (!f.grade || x.grade === f.grade) && (!f.faculty || x.faculty === f.faculty) &&
+    (!f.text || `${nm(x)} ${x.email || ""}`.toLowerCase().includes(f.text.toLowerCase())));
+  const draw = () => {
+    const list = shown();
+    dlg.querySelector("[data-plist]").innerHTML = list.map((x) => `
+      <label class="pm-row ${x.email ? "" : "off"}">
+        <input type="checkbox" data-pid="${x.id}" ${x.email ? "" : "disabled"} ${chosen.has(x.id) ? "checked" : ""}>
+        <span class="pm-name"><b>${esc(nm(x))}</b> <span class="muted small">${esc(GRADE[x.grade] || x.grade || "")}${x.faculty ? " · " + esc(x.faculty) : ""}</span></span>
+        <span class="small ${resp[x.id] ? "ok-text" : "muted"}">${resp[x.id] ? "Answered" : "Not answered"}</span>
+        <span class="small muted pm-mail">${x.email ? esc(x.email) : "no email"}</span>
+      </label>`).join("") || '<p class="muted center small">Nobody matches these filters.</p>';
+    const n = chosen.size;
+    dlg.querySelector("[data-pcount]").innerHTML = `<b>${n}</b> ${n === 1 ? "person" : "people"} ticked · ${list.length} shown`;
+    const send = dlg.querySelector("[data-psend]");
+    send.disabled = !n; send.innerHTML = `<i class="ti ti-send"></i> Send to ${n}`;
+  };
+  draw();
+  dlg.addEventListener("input", (e) => { const k = e.target.dataset.pf; if (k) { f[k] = e.target.value; draw(); } });
+  dlg.addEventListener("change", (e) => {
+    const id = e.target.dataset.pid; if (!id) return;
+    e.target.checked ? chosen.add(Number(id)) : chosen.delete(Number(id)); draw();
+  });
+  dlg.addEventListener("click", async (e) => {
+    const msg = dlg.querySelector(".form-msg");
+    const kind = dlg.querySelector('[name="pk"]:checked').value;
+    if (e.target.closest('[value="cancel"]')) return dlg.close();
+    if (e.target.closest("[data-pall]")) { shown().filter((x) => x.email).forEach((x) => chosen.add(x.id)); return draw(); }
+    if (e.target.closest("[data-pnone]")) { shown().forEach((x) => chosen.delete(x.id)); return draw(); }
+    const test = e.target.closest("[data-ptest]"), send = e.target.closest("[data-psend]");
+    if (!test && !send) return;
+    const btn = test || send, label = btn.innerHTML;
+    if (send && !confirm(`Send the ${kind === "reminder" ? "reminder" : "request"} email to ${chosen.size} ${chosen.size === 1 ? "person" : "people"}?`)) return;
+    btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader-2 spin"></i> Sending…';
+    try {
+      if (test) {
+        await sendMail(round, "test");
+        flash("Test email sent to you — check your inbox.");
+        btn.disabled = false; btn.innerHTML = label;
+        return;
+      }
+      const r = await sendMail(round, kind, [...chosen]);
+      dlg.close(); flash(`Email sent to ${r.sent} ${r.sent === 1 ? "person" : "people"}.`);
+      renderAvailabilityAdmin(root, round.id);
+    } catch (err) {
+      msg.textContent = `Email not sent: ${err.message}`; msg.classList.add("show");
+      btn.disabled = false; btn.innerHTML = label;
+    }
+  });
 }
 
 // =====================================================================
@@ -305,8 +400,8 @@ export async function renderAvailabilityAdmin(root, roundId = null) {
     q(supabase.from("availability_responses").select("*")),
     q(supabase.from("availability").select("*")),
   ]);
-  const active = staff.filter((s) => !s.on_hold);
-  const nm = (s) => `${s.title ? s.title + " " : ""}${s.full_name}`;
+  const active = staff.filter((s) => !s.on_hold && s.grade !== "REG");   // registrar office: admins only, no duties
+  // (nm is defined at the top of the file)
   const round = roundId ? rounds.find((r) => r.id === roundId) : null;
 
   // ----- list of requests -----
@@ -373,14 +468,14 @@ export async function renderAvailabilityAdmin(root, roundId = null) {
           <p class="page-sub">Exam days ${fmt(round.start_date, { day: "numeric", month: "long" })} – ${fmt(round.end_date, { day: "numeric", month: "long", year: "numeric" })}
             ${round.deadline ? ` · deadline ${fmt(round.deadline, { day: "numeric", month: "long" })}` : ""}
             · ${!round.is_open ? '<span class="badge hold">Closed</span>' : roundEditable(round) ? '<span class="badge active">Open</span>' : '<span class="badge hold">Deadline passed</span>'}</p>
-          <p class="small muted">${round.emailed_at ? `Emailed to staff ${new Date(round.emailed_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}` : "Not emailed yet"}
+          ${round.emailed_at ? "" : `<p class="msg show info" style="margin:8px 0"><i class="ti ti-mail-off"></i> Not emailed yet. Check the request (dates, deadline, limits under Settings), then use <b>${noAnswer ? "Email all not answered" : "Choose &amp; send"}</b>.</p>`}
+          <p class="small muted">${round.emailed_at ? `Last emailed ${new Date(round.emailed_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}` : "Not emailed yet"}
             ${round.reminded_at ? ` · reminder sent ${new Date(round.reminded_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}` : ""}
             · ${H ? `${H} halls per session` : "no session cap"} · must stay available per week: ${Object.entries(round.min_available || {}).map(([g, n]) => `${GRADE[g] || g} ${n}`).join(", ")}</p>
         </div>
         <div class="tt-actions">
-          ${round.emailed_at ? `<button class="btn" data-mail="reminder" ${noAnswer ? "" : "disabled"}><i class="ti ti-bell"></i> Remind ${noAnswer} not answered</button>`
-            : `<button class="btn" data-mail="invite"><i class="ti ti-mail"></i> Email all staff</button>`}
-          <button class="btn light" data-mail="test" title="Send the email only to yourself, to check the set-up"><i class="ti ti-mail-check"></i> Test email</button>
+          <button class="btn" data-mail="unanswered" ${noAnswer ? "" : "disabled"} title="Email everyone (with an email address) who hasn't answered yet"><i class="ti ti-bell"></i> ${round.emailed_at ? "Remind" : "Email"} all not answered</button>
+          <button class="btn light" data-pick-mail title="Choose who gets the email: filter by answered, grade or faculty, or pick people"><i class="ti ti-mail-forward"></i> Choose &amp; send</button>
           <button class="btn light" data-settings><i class="ti ti-settings"></i> Settings</button>
           <button class="btn light danger" data-del-this title="Delete this request and all its answers"><i class="ti ti-trash"></i> Delete</button>
           <button class="btn light" data-toggle>${round.is_open ? '<i class="ti ti-lock"></i> Close' : '<i class="ti ti-lock-open"></i> Reopen'}</button>
@@ -425,13 +520,15 @@ export async function renderAvailabilityAdmin(root, roundId = null) {
   on("click", async (e) => {
     const mail = e.target.closest("[data-mail]");
     if (mail) {
-      const kind = mail.dataset.mail;
-      if (kind !== "test" && !confirm(kind === "reminder" ? `Send a reminder email to the ${noAnswer} staff who haven't answered?` : `Email all ${active.filter((s) => s.email).length} staff with an email address about this request?`)) return;
+      const ids = active.filter((x) => !resp[x.id] && x.email).map((x) => x.id);
+      const kind = round.emailed_at ? "reminder" : "invite";
+      if (!confirm(`${kind === "reminder" ? "Send a reminder" : "Send the request"} to the ${ids.length} staff who haven't answered yet?`)) return;
       mail.disabled = true; mail.innerHTML = '<i class="ti ti-loader-2 spin"></i> Sending…';
-      try { const r = await sendMail(round, kind); flash(kind === "test" ? "Test email sent to you — check your inbox." : `Email sent to ${r.sent} staff.`); }
+      try { const r = await sendMail(round, kind, ids); flash(`Email sent to ${r.sent} staff.`); }
       catch (err) { flash(`Email not sent: ${err.message}`, "error"); }
       return renderAvailabilityAdmin(root, round.id);
     }
+    if (e.target.closest("[data-pick-mail]")) return pickAndSend(root, round, active, resp);
     if (e.target.closest("[data-settings]")) return roundDialog(root, round);
     if (e.target.closest("[data-copy]")) {
       const msg = `Dear colleagues,\n\nPlease let us know which days or sessions you can't come for exam duties between ${fmt(round.start_date, { day: "numeric", month: "long" })} and ${fmt(round.end_date, { day: "numeric", month: "long", year: "numeric" })}` +
@@ -515,7 +612,7 @@ async function roundDialog(root, round = null) {
       <p class="small muted">E.g. Professor 2: a professor may mark most of a week “can't come”, as long as 2 sessions stay open. A short week (fewer exam days) asks for no more than it has.</p>
       <p class="small muted">First come, first served: a session closes for a group when too few would be left —
         supervisors need 1 per hall, invigilators 1.5 per hall, hall attendants 1 per hall. Set halls to 0 to switch this off.</p>
-      ${round ? "" : `<label class="check"><input type="checkbox" id="r-mail" checked> Email all staff now (from the exam office Gmail)</label>`}
+      ${round ? "" : `<p class="small muted"><i class="ti ti-mail-off"></i> No email is sent now. Check the request first, then send it from its page.</p>`}
       <p class="msg error form-msg"></p>
       <div class="dialog-actions"><button type="button" class="btn light" value="cancel">Cancel</button><button class="btn">${round ? "Save" : "Create"}</button></div>
     </form>`;
@@ -540,12 +637,8 @@ async function roundDialog(root, round = null) {
         dlg.close(); flash("Saved."); return renderAvailabilityAdmin(root, round.id);
       }
       const r = await q(supabase.from("availability_rounds").insert(row).select("*").single());
-      const mail = dlg.querySelector("#r-mail").checked;
       dlg.close();
-      if (mail) {
-        try { const res = await sendMail(r, "invite"); flash(`Request created and emailed to ${res.sent} staff.`); }
-        catch (err) { flash(`Request created, but the email was not sent: ${err.message}`, "error"); }
-      } else flash("Request created. Use “Email all staff” when you're ready.");
+      flash("Request created. No email sent yet: check it, then use “Email all not answered” or “Choose & send”.");
       location.hash = `availability/${r.id}`;
     } catch (err) { fail(err.message); }
   });

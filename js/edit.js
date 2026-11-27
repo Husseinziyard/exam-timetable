@@ -19,7 +19,7 @@ const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) =>
 const fmt = (s, o = { weekday: "short", day: "2-digit", month: "short" }) =>
   new Date(s + "T00:00:00Z").toLocaleDateString("en-GB", { ...o, timeZone: "UTC" });
 const ROLE = { SUPERVISOR: "Supervisor", INVIGILATOR: "Invigilator", ATTENDANT: "Hall attendant" };
-const GRADE = { PROF: "Prof", SL1: "SL I", SL2: "SL II", LECT: "Lect", INSTR: "Instr", MIL: "Mil", HA: "HA" };
+const GRADE = { PROF: "Prof", SL1: "SL I", SL2: "SL II", LECT: "Lect", INSTR: "Instr", MIL: "Mil", HA: "HA", REG: "Reg" };
 
 async function q(promise) {
   const { data, error } = await promise;

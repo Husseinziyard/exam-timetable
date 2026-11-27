@@ -16,6 +16,7 @@ export const GRADES = [
   ["INSTR", "Instructor / Demonstrator"],
   ["MIL", "Military invigilator"],
   ["HA", "Hall attendant"],
+  ["REG", "Registrar office (admin only, no duties)"],
 ];
 const SUPERVISE_GRADES = ["PROF", "SL1", "SL2"];
 const INVIGILATE_GRADES = ["LECT", "INSTR", "MIL"];
@@ -41,7 +42,7 @@ export const REFS = {
 export const SECTIONS = {
   lecturers: {
     title: "Staff", singular: "staff member", table: "lecturers", pk: "id", order: "full_name", conflict: "full_name", hold: true,
-    help: "Everyone who can get an exam duty: supervisors, invigilators (including staff from other faculties and military invigilators) and hall attendants. “Can supervise / can invigilate” are filled in from the grade; you can change them per person.",
+    help: "Everyone who can get an exam duty: supervisors, invigilators (including staff from other faculties and military invigilators) and hall attendants. “Can supervise / can invigilate” are filled in from the grade; you can change them per person. Registrar office staff are admins only: they never get duties or availability forms.",
     fields: [
       { key: "title", label: "Title", list: true },
       { key: "full_name", label: "Full name", required: true, list: true },
@@ -53,7 +54,7 @@ export const SECTIONS = {
       { key: "staff_no", label: "Staff / EPF number" },
       { key: "can_supervise", label: "Can supervise", type: "checkbox", list: true, auto: (r) => SUPERVISE_GRADES.includes(r.grade) },
       { key: "can_invigilate", label: "Can invigilate", type: "checkbox", list: true, auto: (r) => INVIGILATE_GRADES.includes(r.grade) },
-      { key: "is_admin", label: "Admin access", type: "checkbox", filter: false },
+      { key: "is_admin", label: "Admin access", type: "checkbox", filter: false, auto: (r) => r.grade === "REG" },
     ],
     example: { title: "Dr.", full_name: "AB Perera", grade: "SL1", faculty: "FMSH", department: "", email: "", staff_no: "1234", can_supervise: "", can_invigilate: "", is_admin: "false" },
   },

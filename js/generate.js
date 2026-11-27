@@ -334,7 +334,7 @@ export function buildInput({ mods, batchesOf, batchById, departments, rooms, sta
   return {
     units, batches, opts,
     rooms: rooms.map((r) => ({ id: r.id, name: r.name, cap: r.exam_capacity })),
-    staff: staff.filter((s) => !s.on_hold).map((s) => ({
+    staff: staff.filter((s) => !s.on_hold && s.grade !== "REG").map((s) => ({   // registrar office never gets duties
       id: s.id, name: `${s.title ? s.title + " " : ""}${s.full_name}`, grade: s.grade,
       canSup: !!s.can_supervise, canInv: !!s.can_invigilate, isHA: s.grade === "HA", leave: leaveBy[s.id] || [],
       unavail: unavailBy[s.id] || {}, pref: prefBy[s.id] || null, cap: limits[s.grade] ?? null,

@@ -131,7 +131,7 @@ export async function loadTimetable(periodId) {
     q(supabase.from("modules").select("*")),
     q(supabase.from("batches").select("*")),
     q(supabase.from("rooms").select("*")),
-    q(supabase.from("lecturers").select("*")),
+    q(supabase.from("lecturers").select("*")).then((rows) => rows.filter((s) => s.grade !== "REG")),   // registrar office: never on duty
     q(supabase.from("lecturer_leave").select("*")),
     q(supabase.from("settings").select("*")),
     q(supabase.from("availability").select("lecturer_id,unavailable_date,session").gte("unavailable_date", period.start_date).lte("unavailable_date", period.end_date)),
