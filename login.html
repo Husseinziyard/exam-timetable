@@ -78,6 +78,8 @@
     tabIn.onclick = () => setMode("in");
     tabUp.onclick = () => setMode("up");
 
+    const ended = new URLSearchParams(location.search).get("ended");
+    if (ended) show("You were logged out because the exam office reset your password or changed your login. Log in with the new details you were given.", "info");
     if (new URLSearchParams(location.search).get("denied")) {
       show(`This account doesn't have ${NAMES[door].toLowerCase()} access. Try a different door, or ask the admin to add your email.`);
     }

@@ -120,6 +120,7 @@ input:focus, select:focus { outline: 2px solid var(--accent, var(--blue)); outli
 .msg.show { display: block; }
 .msg.error { background: #fbe9e7; color: var(--red); }
 .msg.ok    { background: #e7f3ea; color: var(--green); }
+.msg.info  { background: #e8eef8; color: #1f3a68; }
 .back { display: inline-block; margin-top: 20px; font-size: 14px; color: var(--muted); }
 
 /* ----- Big menu tiles (role home pages) ----- */

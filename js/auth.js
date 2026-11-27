@@ -36,7 +36,36 @@ export async function requireRole(door) {
     location.replace(`login.html?role=${door}&denied=1`);
     return null;
   }
+  watchSession(door);
   return { user: session.user, role };
+}
+
+// While a page is open, keep checking that the login is still valid. If the admin resets
+// this person's password or removes their login, send them back to the login screen.
+let watching = false;
+function watchSession(door) {
+  if (watching) return;
+  watching = true;
+  let busy = false;
+  const check = async () => {
+    if (busy || document.visibilityState === "hidden") return;
+    busy = true;
+    try {
+      const { data, error } = await supabase.auth.getUser();     // asks the server, not the browser's copy
+      let why = null;
+      if (error && error.status >= 400 && error.status < 500) why = "ended";   // session revoked or login removed
+      else if (!error && !data?.user) why = "ended";
+      else if (data?.user?.user_metadata?.must_change_password) why = "reset";
+      if (why) {
+        await supabase.auth.signOut({ scope: "local" }).catch(() => {});
+        location.replace(`login.html?role=${door}&ended=${why}`);
+      }
+    } catch { /* offline: try again later */ }
+    busy = false;
+  };
+  setInterval(check, 30000);
+  document.addEventListener("visibilitychange", check);
+  window.addEventListener("focus", check);
 }
 
 export async function signOut() {
