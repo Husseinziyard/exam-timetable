@@ -54,6 +54,11 @@
     document.getElementById("box").classList.add(door);
     document.getElementById("title").textContent = `${NAMES[door]} login`;
     document.title = `${NAMES[door]} login — Exam Timetable`;
+    // Lecturers can't sign themselves up: the exam office creates their logins
+    if (door === "lecturer") {
+      document.querySelector(".tabs").remove();
+      document.getElementById("hint").innerHTML = "Use the email and password from the exam office.<br>First time? Use the temporary password from your email. Forgot it? Ask the exam office to reset it.";
+    }
 
     const form = document.getElementById("form");
     const submit = document.getElementById("submit");
@@ -69,14 +74,14 @@
 
     function setMode(m) {
       mode = m;
-      tabIn.classList.toggle("active", m === "in");
-      tabUp.classList.toggle("active", m === "up");
+      tabIn?.classList.toggle("active", m === "in");
+      tabUp?.classList.toggle("active", m === "up");
       submit.textContent = m === "in" ? "Sign in" : "Create account";
       document.getElementById("password").autocomplete = m === "in" ? "current-password" : "new-password";
       msg.className = "msg";
     }
-    tabIn.onclick = () => setMode("in");
-    tabUp.onclick = () => setMode("up");
+    if (tabIn) tabIn.onclick = () => setMode("in");
+    if (tabUp) tabUp.onclick = () => setMode("up");
 
     const ended = new URLSearchParams(location.search).get("ended");
     if (ended) show("You were logged out because the exam office reset your password or changed your login. Log in with the new details you were given.", "info");
