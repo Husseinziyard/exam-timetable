@@ -57,7 +57,7 @@ export function dutyGroup(s) {
 const isOff = (v, ses) => v === "ALL" || v === ses;
 
 export function availabilityForm({ container, round, days, existing = [], preference = "any", readOnly = false,
-  onSave, saveLabel = "Send my availability", minAvail = null, board = null, group = null }) {
+  onSave, saveLabel = "Send my availability", minAvail = null, board = null, group = null, answered = false }) {
   const start = Object.fromEntries(existing.map((r) => [r.unavailable_date, r.session]));
   // people already off in each session (not me), per cover group
   const offNames = {};          // "date|AM" -> [{ name, group }]
@@ -88,7 +88,7 @@ export function availabilityForm({ container, round, days, existing = [], prefer
   };
   container.innerHTML = `
     <form class="av-form">
-      ${readOnly ? `<p class="msg show ok">This form is closed, so answers can't be changed any more.</p>` : ""}
+      ${readOnly ? `<p class="msg show error"><i class="ti ti-lock"></i> This form is closed, so answers can't be changed any more.</p>` : ""}
       <div class="av-tools">
         <p class="small muted">Everything is <b class="green-text">available</b> unless you switch it off. Switch off only the sessions you <b>can't</b> come.
           ${board ? "Time off is first come, first served: a session closes when too few colleagues would be left to cover the halls." : ""}</p>
@@ -106,7 +106,7 @@ export function availabilityForm({ container, round, days, existing = [], prefer
         <div class="seg" role="radiogroup">${PREFS.map(([v, l]) => `<label class="yes"><input type="radio" name="pref" value="${v}" ${preference === v ? "checked" : ""} ${readOnly ? "disabled" : ""}><span>${l}</span></label>`).join("")}</div>
         <p class="small muted">A preference is followed when possible; the sessions you can't come are always respected.</p>
       </fieldset>
-      ${readOnly ? "" : `<button class="btn big" type="submit">${esc(saveLabel)}</button>`}
+      ${readOnly ? "" : `<button class="btn big" type="submit">${esc(saveLabel)}</button><p class="small muted av-saved-note" hidden>Your answers are saved. Change a session to update them.</p>`}
     </form>`;
   const form = container.querySelector("form");
   const offCount = () => form.querySelectorAll("input[data-d]:not(:checked)").length;
@@ -130,6 +130,15 @@ export function availabilityForm({ container, round, days, existing = [], prefer
       ? `Your grade must stay available for at least <b>${minAvail}</b> session${minAvail === 1 ? "" : "s"} in each exam week. `
       : "") + (n ? `${n} session${n > 1 ? "s" : ""} marked “can't come”.` : "You're available for every session.");
   };
+  // once answered, the button stays dull until something actually changes
+  const snapshot = () => [...form.querySelectorAll("input[data-d]")].map((i) => (i.checked ? 1 : 0)).join("") + (form.querySelector('[name="pref"]:checked')?.value || "");
+  let saved = null;
+  const syncButton = () => {
+    const btn = form.querySelector('[type="submit"]'); if (!btn) return;
+    const same = answered && saved === snapshot();
+    btn.disabled = same;
+    const note = form.querySelector(".av-saved-note"); if (note) note.hidden = !same;
+  };
   form.addEventListener("change", (e) => {
     const i = e.target;
     if (i.matches("input[data-d]") && !i.checked && minAvail != null) {
@@ -139,7 +148,7 @@ export function availabilityForm({ container, round, days, existing = [], prefer
         flash(`In the week of ${fmt(weeks[wi][0], { day: "numeric", month: "short" })} you must stay available for at least ${r.keep} session${r.keep === 1 ? "" : "s"}, so at most ${r.maxOff} can be off.`, "error");
       }
     }
-    refresh();
+    refresh(); syncButton();
   });
   form.addEventListener("click", (e) => {
     const w = e.target.closest("[data-who]");
@@ -152,7 +161,7 @@ export function availabilityForm({ container, round, days, existing = [], prefer
       (others.length ? `Others off:\n• ${others.map((o) => o.name).join("\n• ")}\n\n` : "") +
       (room(d, ses) <= 0 && !isOff(start[d], ses) ? "This session is full. If you really can't come, ask one of the colleagues above to change their answer (before the deadline), or contact the exam office." : ""));
   });
-  form.querySelector("[data-reset]")?.addEventListener("click", () => { form.querySelectorAll("input[data-d]").forEach((i) => (i.checked = true)); refresh(); });
+  form.querySelector("[data-reset]")?.addEventListener("click", () => { form.querySelectorAll("input[data-d]:not(:disabled)").forEach((i) => (i.checked = true)); refresh(); syncButton(); });
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const rows = days.map((d) => {
@@ -163,9 +172,10 @@ export function availabilityForm({ container, round, days, existing = [], prefer
     const btn = form.querySelector('[type="submit"]');
     btn.disabled = true; btn.textContent = "Saving…";
     try { await onSave(rows, pref); }
-    finally { btn.disabled = false; btn.textContent = saveLabel; }
+    finally { if (btn.isConnected) { btn.textContent = saveLabel; syncButton(); if (!answered) btn.disabled = false; } }
   });
   refresh();
+  saved = snapshot(); syncButton();
 }
 
 // Database messages → plain words
@@ -251,7 +261,7 @@ export async function renderMyAvailability(panel, me) {
     container: panel.querySelector("#av-form"), round: r, days, existing: mine,
     preference: answered?.preference || "any", readOnly: !editable,
     saveLabel: answered ? "Update my availability" : "Send my availability",
-    minAvail, board: boardRes.data, group: dutyGroup(me),
+    minAvail, board: boardRes.data, group: dutyGroup(me), answered: !!answered,
     onSave: async (rows, pref) => {
       try {
         const problems = await saveAnswers(r.id, me.id, rows, pref);

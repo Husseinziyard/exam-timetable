@@ -8,7 +8,7 @@
 // Every change is saved straight away; the health check then re-runs.
 // =====================================================================
 import { supabase } from "./config.js";
-import { republish } from "./versions.js";
+import { republish, publishPeriod, announceRelease } from "./versions.js";
 import { toast } from "./crud.js";
 import { generate, workingDays, allocate, GRADE_WEIGHT, timeLabel, unavailable } from "./engine.js";
 import { buildInput, saveTimetable, loadAll } from "./generate.js";
@@ -319,10 +319,19 @@ export function mountEditor({ panel, T, periodId, reload, onSelect }) {
       const again = act === "publish" && T.period.options?.replaces;
       if (act === "publish" && errs && !confirm(`The health check still shows ${errs} problem${errs > 1 ? "s" : ""}. Publish anyway?`)) return;
       if (again && !confirm("Republish? This version replaces the published one for lecturers, and the old version is removed.")) return;
-      return run(again ? "Republished — lecturers now see the new version." : "Published — lecturers can now see it.", async () => {
+      await run(again ? "Republished — lecturers now see the new version." : "Published — lecturers can now see it.", async () => {
         if (again) { await republish(T.period); T.period.status = "published"; delete T.period.options.replaces; }
-        else if (act === "publish") await q(supabase.from("exam_periods").update({ status: "published" }).eq("id", periodId));
+        else await publishPeriod(T.period);
       });
+      if (T.period.status !== "published") return;
+      // tell every lecturer by email (doesn't undo the publish if it fails)
+      try {
+        const r = await announceRelease(periodId, !!again);
+        toast(r.sent ? `Emailed ${r.sent} lecturer${r.sent === 1 ? "" : "s"} that the schedule is ${again ? "updated" : "out"}.` : "Published. Nobody in Staff has an email, so no email was sent.");
+      } catch (err) {
+        toast(`Published, but the email to lecturers failed: ${err.message}`, "error");
+      }
+      return;
     }
     if (act === "unpublish") {
       if (!confirm("Unpublish? Lecturers will no longer see this timetable.")) return;

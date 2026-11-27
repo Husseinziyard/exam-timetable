@@ -207,7 +207,7 @@ export async function renderTimetable(root, periodId, go, view = "streams", ui =
   const n = (lvl) => checks.filter((c) => c.level === lvl).length;
   // the Load scale opens by itself only when someone is over their weekly limit
   const overLimit = checks.some((c) => /sessions in the week of/.test(c.text || c.message || c.msg || ""));
-  const right = ui.right === undefined ? (overLimit ? "scale" : null) : ui.right;
+  const right = ui.right === undefined ? (overLimit && !matchMedia("(max-width: 1100px)").matches ? "scale" : null) : ui.right;   // phones and tablets: never pop open by itself
   const p = T.period;
   const live = p.status === "published";
   if (live) ui.edit = false;                       // the live version is never edited directly

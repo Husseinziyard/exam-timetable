@@ -70,6 +70,25 @@
       if (pendingAnswer) document.querySelector('[data-tab="avail"]').insertAdjacentHTML("beforeend", ' <span class="dot-badge" title="Please answer">!</span>');
       document.addEventListener("availability-saved", () => document.querySelector('[data-tab="avail"] .dot-badge')?.remove());
 
+      // a new or updated exam schedule since this person last confirmed seeing it?
+      const stampOf = (p) => p.options?.published_at || p.created_at || "";
+      const latest = periods.reduce((a, p) => (stampOf(p) > a ? stampOf(p) : a), "");
+      const { data: fresh } = await supabase.auth.getUser().catch(() => ({ data: null }));
+      let seen = (fresh?.user || me.user).user_metadata?.seen_schedule || "";
+      const latestPeriod = periods.find((p) => stampOf(p) === latest);
+      const newSchedule = () => !!latest && latest > seen;
+      const scheduleBadge = () => {
+        const tab = document.querySelector('[data-tab="schedule"]');
+        tab.querySelector(".dot-badge")?.remove();
+        if (newSchedule()) tab.insertAdjacentHTML("beforeend", ' <span class="dot-badge" title="New exam schedule">!</span>');
+      };
+      scheduleBadge();
+      async function markScheduleSeen() {
+        seen = latest; scheduleBadge();
+        panel.querySelector(".new-banner")?.remove();
+        await supabase.auth.updateUser({ data: { seen_schedule: latest } }).catch(() => {});
+      }
+
       let T = null, period = null;
       let filt = { staff: "", room: "", from: "", to: "", batch: "" };
 
@@ -126,7 +145,12 @@
         const cell = (h, r) => h.duties.filter((d) => d.role === r).map((d) =>
           d.staffId === mine?.id ? `<mark>${esc(d.name)}</mark>` : esc(d.name)).join("<br>") || "—";
         const b = filt.batch ? T.batchById[filt.batch] : null;
-        return `${nextCard()}
+        const banner = newSchedule() && latestPeriod ? `<div class="new-banner" role="status">
+            <i class="ti ti-bell-ringing"></i>
+            <div><b>${seen ? "The exam schedule has been updated." : "The exam schedule has been released."}</b>
+              <span>${esc(latestPeriod.name)} · published ${fmtDate(latest.slice(0, 10), { day: "numeric", month: "long" })}. Please check your duties.</span></div>
+            <button class="btn small" data-seen>Got it</button></div>` : "";
+        return `${banner}${nextCard()}
           <h2 class="dl-title"><i class="ti ti-download"></i> Download</h2>
           <div class="dl-bar">
             ${mine ? `<button class="btn" data-dl="mine"><i class="ti ti-user"></i> My schedule</button>` : ""}
@@ -148,13 +172,13 @@
             ${any ? '<button class="link" data-clear-f>Clear filters</button>' : ""}
           </div>
           <p class="muted small">${hs.length} of ${T.halls.length} hall sessions${b ? ` · showing the halls where Intake ${b.intake} ${esc(b.stream)} sits` : ""}${isMe() ? " · your duties" : ""}</p>
-          <div class="table-wrap"><table class="data">
+          <div class="table-wrap"><table class="data sched">
             <thead><tr><th>Date</th><th>Time</th><th>Exam hall</th><th>Papers</th><th>Students</th><th>Supervisor</th><th>Invigilators</th><th>Hall attendant</th></tr></thead>
             <tbody>${hs.map((h) => `<tr data-hall="${h.id}" tabindex="0" class="${h.duties.some((d) => d.staffId === mine?.id) ? "mine" : ""}" title="Click for details">
-              <td>${fmtDate(h.date, { weekday: "short", day: "2-digit", month: "short" })}</td><td>${timeOf(h)}</td><td><b>${esc(h.room.name)}</b></td>
-              <td>${h.papers.map((p) => `<div><b>${esc(p.exam?.module.code)}</b> <span class="muted small">${esc(p.exam?.streams.map((x) => x.stream).join(", "))}</span></div>`).join("")}</td>
-              <td>${h.students}</td>
-              <td>${cell(h, "SUPERVISOR")}</td><td>${cell(h, "INVIGILATOR")}</td><td>${cell(h, "ATTENDANT")}</td></tr>`).join("")
+              <td class="c-date">${fmtDate(h.date, { weekday: "short", day: "2-digit", month: "short" })}</td><td class="c-time">${timeOf(h)}</td><td class="c-hall" data-label="Hall"><b>${esc(h.room.name)}</b></td>
+              <td class="c-papers" data-label="Papers">${h.papers.map((p) => `<div><b>${esc(p.exam?.module.code)}</b> <span class="muted small">${esc(p.exam?.streams.map((x) => x.stream).join(", "))}</span></div>`).join("")}</td>
+              <td class="c-stu" data-label="Students">${h.students}</td>
+              <td data-label="Supervisor">${cell(h, "SUPERVISOR")}</td><td data-label="Invigilators">${cell(h, "INVIGILATOR")}</td><td data-label="Hall attendant">${cell(h, "ATTENDANT")}</td></tr>`).join("")
               || `<tr><td colspan="8" class="muted center">Nothing matches these filters.</td></tr>`}</tbody></table></div>`;
       }
 
@@ -177,6 +201,7 @@
 
       // ---------- clicks / changes ----------
       panel.addEventListener("click", async (e) => {
+        if (e.target.closest("[data-seen]")) return markScheduleSeen();
         if (e.target.closest("[data-clear-f]")) { filt = { staff: "", room: "", from: "", to: "", batch: "" }; return show("schedule"); }
         const dl = e.target.closest("[data-dl]");
         if (dl) {

@@ -13,7 +13,7 @@
 <body class="admin workspace">
   <header class="topbar">
     <div class="topbar-left">
-      <button class="icon-btn mobile-only" id="menu" aria-label="Open menu"><i class="ti ti-menu-2"></i></button>
+      <button class="icon-btn" id="menu" aria-label="Open menu" aria-expanded="false" aria-controls="sidebar" title="Open menu"><i class="ti ti-menu-2"></i></button>
       <a class="brand" href="admin.html">
         <div class="brand-mark">ET</div>
         <div class="brand-text"><strong>Exam Timetable</strong><span>Admin · Exam timetable</span></div>
@@ -25,13 +25,7 @@
   <div class="app" id="page" hidden>
     <aside class="sidebar" id="sidebar" aria-label="Sections">
       <nav id="nav">
-        <!-- Overview row: the icon opens/closes the sidebar, the word "Overview" opens the page -->
-        <div class="nav-row" data-key="overview">
-          <button class="nav-icon" id="toggle" aria-expanded="false" aria-controls="sidebar" title="Open menu">
-            <i class="ti ti-layout-dashboard" aria-hidden="true"></i>
-          </button>
-          <a href="#overview" class="nav-text">Overview</a>
-        </div>
+        <a href="#overview" data-key="overview" title="Overview"><i class="ti ti-layout-dashboard" aria-hidden="true"></i><span>Overview</span></a>
         <div class="nav-label">Data</div>
         <!-- section links are added by the script below -->
       </nav>
@@ -68,8 +62,8 @@
         <div class="nav-label">Access</div>
         <a href="#logins" data-key="logins" title="Staff logins"><i class="ti ti-key" aria-hidden="true"></i><span>Staff logins</span></a>`);
 
-      // ----- sidebar: closed by default; the Overview icon opens it, click again to close -----
-      const toggle = document.getElementById("toggle");
+      // ----- sidebar: closed by default; the menu button (top left) opens and closes it -----
+      const toggle = document.getElementById("menu");
       const isPhone = () => matchMedia("(max-width: 800px)").matches;
       const isOpen = () => (isPhone() ? app.classList.contains("open") : !app.classList.contains("collapsed"));
       const setOpen = (open) => {
@@ -81,7 +75,6 @@
       app.classList.add("collapsed");
       setOpen(false);
       toggle.addEventListener("click", () => setOpen(!isOpen()));
-      document.getElementById("menu").addEventListener("click", () => setOpen(true));
       document.getElementById("backdrop").addEventListener("click", () => setOpen(false));
 
       // ----- page switching using the part of the URL after "#" -----

@@ -129,3 +129,68 @@ table.data mark { background: #d7ecdd; color: var(--green); font-weight: 600; pa
 /* ===== Lecturer page: "Download" heading above the download buttons ===== */
 .dl-title { font-size: 15px; font-weight: 600; margin: 4px 0 8px; display: flex; align-items: center; gap: 6px; color: var(--ink); }
 .dl-title i { color: var(--muted); }
+
+/* ----- "new exam schedule" banner ----- */
+.new-banner { display: flex; align-items: center; gap: 14px; padding: 14px 18px; margin-bottom: 16px; border-radius: 12px;
+  background: #fff4e8; border: 1px solid #f3c99c; color: #6b3b0a; }
+.new-banner > i { font-size: 24px; color: var(--orange); }
+.new-banner > div { flex: 1; display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
+.new-banner .btn { flex: none; }
+
+/* ===== lecturer page on phones ===== */
+@media (max-width: 640px) {
+  .viewer { padding: 20px 14px 40px; }
+  #hello { font-size: 26px; }
+  .v-tabs.two { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; margin-bottom: 16px; }
+  .v-tabs.two button { min-width: 0; padding: 10px 6px; font-size: 14px; gap: 6px; }
+  .new-banner { flex-wrap: wrap; padding: 12px 14px; }
+  .new-banner .btn { width: 100%; justify-content: center; }
+  .next-card.slim { padding: 18px; gap: 14px; }
+  .next-card.slim .next-info h2 { font-size: 24px; }
+  .kv { grid-template-columns: 92px 1fr; }
+
+  /* downloads: tidy two-column grid */
+  .dl-bar { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 12px; }
+  .dl-bar > [data-dl="mine"], .dl-bar .dl-batch { grid-column: 1 / -1; }
+  .dl-bar .dl-batch { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+  .dl-bar .btn { justify-content: center; padding: 10px 8px; font-size: 14px; }
+  .dl-bar select { width: 100%; }
+
+  /* filters: two per row, lecturer and batch full width */
+  .filters-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .filters-row label:nth-of-type(1), .filters-row label:nth-of-type(2), .filters-row label:nth-of-type(5) { grid-column: 1 / -1; }
+  .filters-row select { width: 100%; min-width: 0; }
+  .filters-row [data-clear-f] { grid-column: 1 / -1; justify-self: start; }
+
+}
+
+/* ===== availability form on phones ===== */
+@media (max-width: 640px) {
+  .av-head { flex-wrap: wrap; gap: 8px; }
+  .av-day { flex-wrap: wrap; gap: 8px; }
+  .av-day .sw-pair { width: 100%; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .av-day .sw { min-width: 0; }
+  .av-form .btn.big, form .btn.big { width: 100%; justify-content: center; }
+  fieldset.av-week legend { font-size: 15px; }
+}
+
+/* ===== schedule as cards on phones and tablets (one column on phones, two on tablets) ===== */
+@media (max-width: 900px) {
+  /* the schedule table becomes a list of cards */
+  .table-wrap:has(table.sched) { background: none; border: 0; box-shadow: none; overflow: visible; }
+  table.sched, table.sched tbody { display: block; }
+  table.sched thead { display: none; }
+  table.sched tr { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; padding: 14px 16px; margin-bottom: 10px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
+  table.sched tr.mine { border-color: #9cc5a6; background: #f1f8f2; }
+  table.sched td { display: block; padding: 0; border: 0; font-size: 14px; }
+  table.sched td.c-date { font-weight: 700; font-size: 15px; }
+  table.sched td.c-time { font-weight: 600; color: var(--muted); font-size: 15px; }
+  table.sched td[data-label] { grid-column: 1 / -1; display: grid; grid-template-columns: 104px 1fr; gap: 8px; }
+  table.sched td[data-label]::before { content: attr(data-label); color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; padding-top: 2px; }
+  table.sched td.c-hall { margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--line); }
+  table.sched tr > td[colspan] { grid-column: 1 / -1; text-align: center; }
+  table.sched tbody { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  table.sched tr { margin-bottom: 0; align-content: start; }
+}
+@media (max-width: 640px) { table.sched tbody { grid-template-columns: 1fr; } }

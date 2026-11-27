@@ -81,6 +81,6 @@ export function setupHeader(user) {
   if (btn) {
     btn.addEventListener("click", signOut);
     if (!document.getElementById("pw-link")) btn.insertAdjacentHTML("beforebegin",
-      `<a id="pw-link" class="top-link" href="password.html?next=${encodeURIComponent(location.pathname.split("/").pop() || "index.html")}">Change password</a>`);
+      `<a id="pw-link" class="top-link" href="password.html?next=${encodeURIComponent(location.pathname.split("/").pop() || "index.html")}" title="Change password" aria-label="Change password"><i class="ti ti-key"></i><span>Change password</span></a>`);
   }
 }

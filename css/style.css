@@ -146,4 +146,20 @@ input:focus, select:focus { outline: 2px solid var(--accent, var(--blue)); outli
 }
 .top-link { color: #c9d1de; font-size: 14px; text-decoration: none; }
 .top-link:hover { color: #fff; text-decoration: underline; }
-@media (max-width: 640px) { .top-link { display: none; } }
+.top-link { display: inline-flex; align-items: center; gap: 6px; }
+.top-link i { font-size: 18px; display: none; }
+
+/* ===== phones and small tablets ===== */
+@media (max-width: 640px) {
+  .topbar { padding: 10px 14px; gap: 10px; }
+  .brand-mark { width: 32px; height: 32px; font-size: 14px; }
+  .brand-text strong { font-size: 15px; white-space: nowrap; }
+  .topbar-right { gap: 8px; }
+  #who { display: none; }                         /* email takes too much room on a phone */
+  .top-link span { display: none; }               /* Change password → key icon */
+  .top-link i { display: inline; }
+  .top-link { padding: 8px; border-radius: 8px; }
+  .topbar .btn.ghost { padding: 8px 12px; white-space: nowrap; font-size: 14px; }
+  .page-sub { font-size: 15px; margin-bottom: 24px; }
+  input, select, textarea { font-size: 16px; }    /* stops iPhone zooming into fields */
+}

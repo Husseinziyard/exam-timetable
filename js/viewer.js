@@ -319,6 +319,13 @@ export function facultyRows(T, halls) {
 export async function pdfFacultySheet(T, period, { halls = T.halls, note = "", highlight = null, filename = "exam-supervisor-invigilator-list.pdf" } = {}) {
   const jsPDF = await loadPdfLibrary();
   const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+  drawFacultySheet(doc, T, period, { halls, note, highlight });
+  facultyPageNumbers(doc);
+  doc.save(filename);
+}
+
+// Draws the sheet into a document that may already have pages (several people in one file)
+function drawFacultySheet(doc, T, period, { halls = T.halls, note = "", highlight = null } = {}) {
   const W = doc.internal.pageSize.getWidth(), M = 24;
   const all = facultyRows(T, halls);
   const intakes = [...new Set(all.flatMap((r) => r.intake.split("/")))].sort((a, b) => b - a);
@@ -418,15 +425,17 @@ export async function pdfFacultySheet(T, period, { halls = T.halls, note = "", h
   doc.setFont("times", "normal");
   doc.text("Distribution  -", M, y + 40);
   ["All HoDs - FMSH", "All Supervisors & Invigilators", "All Hall Attendants", "DR - Examinations"].forEach((t, i) => doc.text(t, M + 90, y + 40 + i * 12));
-  // fix "Page x of y" now that we know the total
-  const n = doc.internal.getNumberOfPages();
+}
+
+// fix "Page x of y" now that we know the total
+function facultyPageNumbers(doc) {
+  const W = doc.internal.pageSize.getWidth(), n = doc.internal.getNumberOfPages();
   for (let i = 1; i <= n; i++) {
     doc.setPage(i); doc.setFillColor(255, 255, 255);
     doc.rect(W / 2 - 40, doc.internal.pageSize.getHeight() - 24, 80, 14, "F");
     doc.setFontSize(7); doc.setTextColor(120); doc.setFont("times", "normal");
     doc.text(`Page ${i} of ${n}`, W / 2, doc.internal.pageSize.getHeight() - 14, { align: "center" });
   }
-  doc.save(filename);
 }
 
 // One batch (or several, one page each): the timetable to email to students
@@ -515,21 +524,19 @@ export function pdfStaff(T, period, staffId, name) {
 }
 
 // Duty list for every staff member (one page each) — handy for the exam office
-export function pdfAllStaff(T, period) {
+export async function pdfAllStaff(T, period) {
   const ids = [...new Set(T.halls.flatMap((h) => h.duties.map((d) => d.staffId)))]
     .sort((a, b) => T.name(a).localeCompare(T.name(b)));
-  return downloadPdf({
-    sections: ids.map((id) => {
-      const hs = T.halls.filter((h) => h.duties.some((d) => d.staffId === id));
-      return { title: `Exam duties — ${T.name(id)}`, subtitle: `${periodLine(period)} · ${hs.length} dut${hs.length === 1 ? "y" : "ies"}`,
-        head: ["Date", "Time", "Exam hall", "Role", "Papers", "Batches"],
-        body: hs.map((h) => [fmtDate(h.date, { weekday: "short", day: "2-digit", month: "short" }), hallTime(h), h.room.name,
-          ROLE_NAMES[h.duties.find((d) => d.staffId === id)?.role] || "",
-          h.papers.map((p) => p.exam?.module.code).join(", "),
-          [...new Set(h.papers.flatMap((p) => p.exam?.streams.map(batchLabel) || []))].join(", ")]) };
-    }),
-    filename: "staff-duty-lists.pdf",
+  const jsPDF = await loadPdfLibrary();
+  const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+  ids.forEach((id, i) => {
+    if (i > 0) doc.addPage();       // each person starts on a new page
+    const hs = T.halls.filter((h) => h.duties.some((d) => d.staffId === id));
+    drawFacultySheet(doc, T, period, { halls: hs, highlight: id,
+      note: `Duties of ${T.name(id)} (${hs.length} dut${hs.length === 1 ? "y" : "ies"})` });
   });
+  facultyPageNumbers(doc);
+  doc.save("staff-duty-lists.pdf");
 }
 
 // =====================================================================

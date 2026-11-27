@@ -70,10 +70,31 @@ export async function copyPeriod(liveId) {
 // Make the draft copy the live version and remove the old live version
 export async function republish(period) {
   const oldId = period.options?.replaces;
-  const options = { ...(period.options || {}) };
+  const options = { ...(period.options || {}), published_at: new Date().toISOString() };
   delete options.replaces;
   await q(supabase.from("exam_periods").update({ status: "published", options }).eq("id", period.id));
   if (oldId) await q(supabase.from("exam_periods").delete().eq("id", oldId));
+}
+
+// Publish a draft for the first time (or again after Unpublish)
+export async function publishPeriod(period) {
+  const options = { ...(period.options || {}), published_at: new Date().toISOString() };
+  await q(supabase.from("exam_periods").update({ status: "published", options }).eq("id", period.id));
+  period.status = "published"; period.options = options;
+}
+
+// Email every lecturer that the schedule is out (again = it was republished).
+// Returns { sent } or throws with a plain message.
+export async function announceRelease(periodId, again = false) {
+  const site = new URL(".", location.href).href;
+  const { data, error } = await supabase.functions.invoke("send-mail", { body: { kind: "released", period_id: periodId, again, site } });
+  if (error) {
+    let m = error.message;
+    try { m = (await error.context?.json())?.error || m; } catch {}
+    throw new Error(m);
+  }
+  if (data?.error) throw new Error(data.error);
+  return data || {};
 }
 
 // Delete any timetable (draft or published). Everything inside it goes too.
